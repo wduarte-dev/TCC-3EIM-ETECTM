@@ -1,7 +1,7 @@
 import cv2
 import mediapipe as mp
 import time
-import winsound
+# import winsound
 
 from frame import capturar_frame
 from coordenadas_landmarks import pegar_landmarks, options
@@ -104,8 +104,7 @@ with mp.tasks.vision.PoseLandmarker.create_from_options(options) as landmarker:
                     print("Postura desviada")
 
                     # Som a cada frame enquanto estiver desviada
-                    winsound.Beep(1000, 1000)
-                    time.sleep(1)
+                    # winsound.Beep(1000, 1000)
 
         # Mostra a câmera
         cv2.imshow("Camera", frame)
