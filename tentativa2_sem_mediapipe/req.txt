@@ -1,0 +1,4 @@
+python 3.11
+tflite-runtime
+numpy
+opencv-python
