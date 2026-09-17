@@ -1,4 +1,5 @@
 import time
+from os import system
 minutos = int(input("Digite o tempo em minutos: "))
 tempo_total_em_segundos = minutos * 60
 segundos = minutos = horas = 0
@@ -15,6 +16,7 @@ while True:
         if minutos == 60:
             minutos = 0
             horas += 1
+    system('cls')
     print(f"{horas}h {minutos}min {segundos}s")
 
     
