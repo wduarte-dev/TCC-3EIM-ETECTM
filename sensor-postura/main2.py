@@ -232,12 +232,24 @@ while baseline_angulo is None or baseline_razao is None:
 
 print(f"Baseline calibrada: angulo={baseline_angulo:.1f}°  razao_pescoco={baseline_razao:.3f}")
 
-contador_ma_postura = 0
+# Intervalo entre inferências do modelo. Não precisa ser a cada frame —
+# postura não muda em milissegundos. Isso é o que mais alivia o RPi3B.
+# 0.3-1.0s dá boa responsividade; 3.0s (sua ideia) deixa ainda mais leve
+# mas o alerta demora mais pra aparecer. Ajuste esse número à vontade,
+# o resto da lógica (thresholds, suavização, persistência) se adapta sozinho.
+INTERVALO_INFERENCIA = 0.5  # segundos
+TEMPO_CONFIRMACAO_ALERTA = 0.5  # segundos de má postura sustentada antes do ALERTA (era ~15 frames a 30fps)
 
 # Suavização temporal: média móvel dos últimos N valores, reduz o "tremor" da leitura
 HISTORICO_TAMANHO = 5
 historico_angulos = deque(maxlen=HISTORICO_TAMANHO)
 historico_razoes = deque(maxlen=HISTORICO_TAMANHO)
+
+ultimo_tempo_inferencia = 0.0
+tempo_inicio_ruim = None  # timestamp de quando a má postura começou (None = postura ok)
+status_texto = "Procurando usuario..."
+cor_alerta = (255, 255, 255)
+pontos_atuais = None  # último conjunto de pontos detectado, reaproveitado entre inferências
 
 while True:
     retorno, frame = captura.read()
@@ -247,52 +259,64 @@ while True:
     # Espelha o frame para efeito de espelho
     frame = cv2.flip(frame, 1)
 
-    angulo_bruto, razao_pescoco, pontos = detectar_metricas_postura(frame, LIMIAR_CONFIANCA)
+    agora = time.time()
 
-    status_texto = "Procurando usuario..."
-    cor_alerta = (255, 255, 255)
+    # Só roda o modelo a cada INTERVALO_INFERENCIA segundos. Nos frames
+    # "pulados" a inferência não roda (isso que alivia a CPU), e a tela
+    # reaproveita o último resultado conhecido pra manter o HUD coerente.
+    if agora - ultimo_tempo_inferencia >= INTERVALO_INFERENCIA:
+        ultimo_tempo_inferencia = agora
+        angulo_bruto, razao_pescoco, pontos = detectar_metricas_postura(frame, LIMIAR_CONFIANCA)
 
-    if angulo_bruto is not None and razao_pescoco is not None:
-        x_orelha, y_orelha, x_ombro_esq, y_ombro_esq, x_ombro_dir, y_ombro_dir = pontos
+        if angulo_bruto is not None and razao_pescoco is not None:
+            pontos_atuais = pontos
 
-        # Desenha os pontos e as linhas de referência no corpo
+            # Suavização temporal (média móvel)
+            historico_angulos.append(angulo_bruto)
+            historico_razoes.append(razao_pescoco)
+            angulo = sum(historico_angulos) / len(historico_angulos)
+            razao = sum(historico_razoes) / len(historico_razoes)
+
+            # Componente lateral: desvio do ângulo em relação à baseline
+            desvio_angulo = abs(angulo - baseline_angulo)
+
+            # Componente de "queda de cabeça": quanto a razão pescoço/ombros
+            # encolheu em relação à baseline (só interessa quando DIMINUI)
+            queda_razao = (baseline_razao - razao) / baseline_razao
+
+            postura_ruim = desvio_angulo > LIMIAR_DESVIO_ANGULO or queda_razao > LIMIAR_QUEDA_RAZAO
+
+            if postura_ruim:
+                if tempo_inicio_ruim is None:
+                    tempo_inicio_ruim = agora
+                if agora - tempo_inicio_ruim > TEMPO_CONFIRMACAO_ALERTA:
+                    status_texto = f"ALERTA: POSTURA INCORRETA (ang {int(desvio_angulo)}° / queda {queda_razao*100:.0f}%)"
+                    cor_alerta = (0, 0, 255)  # Vermelho
+                else:
+                    status_texto = f"ATENCAO... (ang {int(desvio_angulo)}° / queda {queda_razao*100:.0f}%)"
+                    cor_alerta = (0, 255, 255)  # Amarelo
+            else:
+                tempo_inicio_ruim = None
+                status_texto = f"POSTURA CORRETA (ang {int(desvio_angulo)}° / queda {queda_razao*100:.0f}%)"
+                cor_alerta = (0, 255, 0)  # Verde
+        else:
+            # Sem detecção confiável: zera os históricos para não misturar leituras antigas
+            historico_angulos.clear()
+            historico_razoes.clear()
+            tempo_inicio_ruim = None
+            status_texto = "Procurando usuario..."
+            cor_alerta = (255, 255, 255)
+            pontos_atuais = None
+
+    # Desenha o overlay todo frame (mesmo sem inferência nova agora),
+    # usando o último resultado conhecido — mantém o vídeo fluido
+    if pontos_atuais is not None:
+        x_orelha, y_orelha, x_ombro_esq, y_ombro_esq, x_ombro_dir, y_ombro_dir = pontos_atuais
         cv2.circle(frame, (x_orelha, y_orelha), 6, (255, 0, 0), -1)
         cv2.circle(frame, (x_ombro_esq, y_ombro_esq), 6, (0, 255, 255), -1)
         cv2.circle(frame, (x_ombro_dir, y_ombro_dir), 6, (0, 255, 255), -1)
         cv2.line(frame, (x_orelha, y_orelha), (x_ombro_esq, y_ombro_esq), (255, 255, 255), 2)
         cv2.line(frame, (x_ombro_esq, y_ombro_esq), (x_ombro_dir, y_ombro_dir), (255, 255, 255), 1)
-
-        # Suavização temporal (média móvel)
-        historico_angulos.append(angulo_bruto)
-        historico_razoes.append(razao_pescoco)
-        angulo = sum(historico_angulos) / len(historico_angulos)
-        razao = sum(historico_razoes) / len(historico_razoes)
-
-        # Componente lateral: desvio do ângulo em relação à baseline
-        desvio_angulo = abs(angulo - baseline_angulo)
-
-        # Componente de "queda de cabeça": quanto a razão pescoço/ombros
-        # encolheu em relação à baseline (só interessa quando DIMINUI)
-        queda_razao = (baseline_razao - razao) / baseline_razao
-
-        postura_ruim = desvio_angulo > LIMIAR_DESVIO_ANGULO or queda_razao > LIMIAR_QUEDA_RAZAO
-
-        if postura_ruim:
-            contador_ma_postura += 1
-            if contador_ma_postura > 15:  # ~ meio segundo a 30fps
-                status_texto = f"ALERTA: POSTURA INCORRETA (ang {int(desvio_angulo)}° / queda {queda_razao*100:.0f}%)"
-                cor_alerta = (0, 0, 255)  # Vermelho
-            else:
-                status_texto = f"ATENCAO... (ang {int(desvio_angulo)}° / queda {queda_razao*100:.0f}%)"
-                cor_alerta = (0, 255, 255)  # Amarelo
-        else:
-            contador_ma_postura = max(0, contador_ma_postura - 1)
-            status_texto = f"POSTURA CORRETA (ang {int(desvio_angulo)}° / queda {queda_razao*100:.0f}%)"
-            cor_alerta = (0, 255, 0)  # Verde
-    else:
-        # Sem detecção confiável: zera os históricos para não misturar leituras antigas
-        historico_angulos.clear()
-        historico_razoes.clear()
 
     # Exibe o status na tela
     cv2.putText(frame, status_texto, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, cor_alerta, 2, cv2.LINE_AA)

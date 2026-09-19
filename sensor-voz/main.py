@@ -8,6 +8,7 @@ import os
 SAMPLE_RATE = 48000
 CANAIS = 1
 DURACAO = 3
+
 # Pega o caminho absoluto do diretório onde este arquivo .py está localizado
 DIRETORIO_ATUAL = os.path.dirname(os.path.abspath(__file__))
 ARQUIVO_AUDIO = os.path.join(DIRETORIO_ATUAL, "teste_audio.wav")
