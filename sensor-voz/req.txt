@@ -1,0 +1,8 @@
+newer python version
+scipy
+numpy
+sounddevice
+prat (via sudo apt install prat no linux, tar no rpi 3B* ou instalador no windows)
+*Extraia o arquivo na pasta sensor-voz e siga as instruções de instalação no site oficial
+
+

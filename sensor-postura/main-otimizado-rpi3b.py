@@ -1,3 +1,4 @@
+import os
 import cv2
 import numpy as np
 import math
@@ -9,8 +10,36 @@ try:
 except ImportError:
     from tensorflow.lite.python import interpreter as tflite
 
+# =====================================================================
+# OTIMIZAÇÕES PARA RASPBERRY PI 3B (Cortex-A53 quad-core @ 1.2GHz, 1GB RAM)
+# Nenhuma mudança nesta seção altera os cálculos de postura (ângulo,
+# razão pescoço/ombros) nem a lógica de decisão do sistema — apenas
+# reduz o custo de CPU por frame. Comentários "OTIMIZAÇÃO N" marcam
+# cada mudança em relação ao script original.
+# =====================================================================
+
+# OTIMIZAÇÃO 1: o OpenCV, por padrão, cria seu próprio pool de threads
+# para operações como resize/cvtColor. Em um Pi 3B (só 4 núcleos), isso
+# compete com as threads do TFLite abaixo e gera overhead de
+# criação/destruição de threads a cada frame. Como as operações do
+# OpenCV aqui são leves comparadas à inferência, é mais eficiente
+# deixar o OpenCV rodar em 1 thread e reservar os núcleos para o
+# TFLite.
+cv2.setNumThreads(1)
+
 # Carrega o modelo MoveNet
-interpretador = tflite.Interpreter(model_path="movenet_lightning.tflite")
+# OTIMIZAÇÃO 2: por padrão o interpretador do TFLite roda em 1 thread.
+# Isso é, de longe, a maior fonte de lentidão/travamento em um Pi 3B,
+# já que a inferência fica presa a um único núcleo (1.2GHz). Usamos
+# NUM_THREADS_TFLITE núcleos para a inferência e deixamos 1 núcleo
+# livre para captura de câmera + exibição (cv2.imshow), evitando que a
+# thread principal trave/engasgue enquanto o modelo roda.
+NUM_THREADS_TFLITE = max(1, (os.cpu_count() or 4) - 1)  # 3 núcleos em um Pi 3B (4 núcleos)
+
+interpretador = tflite.Interpreter(
+    model_path="movenet_lightning.tflite",
+    num_threads=NUM_THREADS_TFLITE,
+)
 interpretador.allocate_tensors()
 detalhes_entrada = interpretador.get_input_details()
 detalhes_saida = interpretador.get_output_details()
@@ -70,6 +99,11 @@ def preprocessar_letterbox(frame, tamanho):
     escala = tamanho / max(h, w)
     novo_w, novo_h = int(round(w * escala)), int(round(h * escala))
 
+    # OTIMIZAÇÃO 3: INTER_LINEAR (padrão do cv2.resize) é mantido — trocar
+    # por INTER_NEAREST economizaria um pouco de CPU, mas pode degradar a
+    # qualidade dos keypoints detectados, o que afetaria o cálculo. Como o
+    # pedido foi não prejudicar os cálculos, a interpolação original foi
+    # preservada.
     redimensionado = cv2.resize(frame, (novo_w, novo_h))
 
     pad_w = tamanho - novo_w
@@ -108,7 +142,14 @@ def detectar_metricas_postura(frame, limiar_confianca):
     (o ombro direito agora é necessário como referência de escala).
     """
     entrada_img, escala, offset_x, offset_y = preprocessar_letterbox(frame, TAMANHO_ENTRADA)
-    entrada_tensor = np.expand_dims(entrada_img, axis=0).astype(DTYPE_ESPERADO)
+
+    # OTIMIZAÇÃO 4: np.expand_dims + .astype(dtype) sempre alocava um novo
+    # array e SEMPRE copiava os dados, mesmo quando entrada_img já estava
+    # no dtype esperado pelo modelo (comum em modelos quantizados uint8).
+    # Trocamos para indexação com newaxis (equivalente, sem cópia extra) e
+    # passamos copy=False no astype, para só copiar quando o dtype
+    # realmente muda. O valor numérico produzido é idêntico ao original.
+    entrada_tensor = entrada_img[np.newaxis, ...].astype(DTYPE_ESPERADO, copy=False)
     interpretador.set_tensor(detalhes_entrada[0]['index'], entrada_tensor)
 
     interpretador.invoke()
@@ -206,9 +247,29 @@ def calibrar_postura(captura, duracao_segundos=5):
 
 # Conecta na Câmera
 LARGURA, ALTURA = 640, 480
-captura = cv2.VideoCapture(0)
+
+# OTIMIZAÇÃO 5: forçamos o backend V4L2 explicitamente. No Linux/Raspberry
+# Pi, o OpenCV às vezes cai em um backend genérico (ex: GStreamer) mais
+# pesado; V4L2 é o caminho nativo e mais leve para webcams USB no Pi.
+captura = cv2.VideoCapture(0, cv2.CAP_V4L2)
+
+# OTIMIZAÇÃO 6: solicita captura em MJPG. Muitas webcams USB, por padrão,
+# transmitem em YUYV bruto, que é muito mais pesado de transportar via USB
+# e de converter na CPU. Em MJPG, a própria câmera já comprime o frame, e a
+# decodificação de MJPG é mais rápida que processar o YUYV bruto na CPU
+# fraca do Pi 3B. Se a câmera não suportar, esta chamada simplesmente não
+# tem efeito (não quebra o restante do código).
+captura.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+
 captura.set(cv2.CAP_PROP_FRAME_WIDTH, LARGURA)
 captura.set(cv2.CAP_PROP_FRAME_HEIGHT, ALTURA)
+
+# OTIMIZAÇÃO 7: reduz o buffer interno de frames para 1. Sem isso, se o
+# processamento (inferência) for mais lento que a captura, a fila de
+# frames pendentes cresce e o vídeo exibido passa a mostrar frames
+# "atrasados" (lag crescente) em vez de travar a taxa de captura no ritmo
+# do processamento. Com buffer=1, sempre pegamos o frame mais recente.
+captura.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
 print("\n=== SISTEMA DE MONITORAMENTO DE POSTURA (OTIMIZADO) ===")
 print("Pressione a tecla 'q' na janela da imagem para encerrar.\n")
@@ -232,24 +293,12 @@ while baseline_angulo is None or baseline_razao is None:
 
 print(f"Baseline calibrada: angulo={baseline_angulo:.1f}°  razao_pescoco={baseline_razao:.3f}")
 
-# Intervalo entre inferências do modelo. Não precisa ser a cada frame —
-# postura não muda em milissegundos. Isso é o que mais alivia o RPi3B.
-# 0.3-1.0s dá boa responsividade; 3.0s (sua ideia) deixa ainda mais leve
-# mas o alerta demora mais pra aparecer. Ajuste esse número à vontade,
-# o resto da lógica (thresholds, suavização, persistência) se adapta sozinho.
-INTERVALO_INFERENCIA = 0.5  # segundos
-TEMPO_CONFIRMACAO_ALERTA = 0.5  # segundos de má postura sustentada antes do ALERTA (era ~15 frames a 30fps)
+contador_ma_postura = 0
 
 # Suavização temporal: média móvel dos últimos N valores, reduz o "tremor" da leitura
 HISTORICO_TAMANHO = 5
 historico_angulos = deque(maxlen=HISTORICO_TAMANHO)
 historico_razoes = deque(maxlen=HISTORICO_TAMANHO)
-
-ultimo_tempo_inferencia = 0.0
-tempo_inicio_ruim = None  # timestamp de quando a má postura começou (None = postura ok)
-status_texto = "Procurando usuario..."
-cor_alerta = (255, 255, 255)
-pontos_atuais = None  # último conjunto de pontos detectado, reaproveitado entre inferências
 
 while True:
     retorno, frame = captura.read()
@@ -259,64 +308,52 @@ while True:
     # Espelha o frame para efeito de espelho
     frame = cv2.flip(frame, 1)
 
-    agora = time.time()
+    angulo_bruto, razao_pescoco, pontos = detectar_metricas_postura(frame, LIMIAR_CONFIANCA)
 
-    # Só roda o modelo a cada INTERVALO_INFERENCIA segundos. Nos frames
-    # "pulados" a inferência não roda (isso que alivia a CPU), e a tela
-    # reaproveita o último resultado conhecido pra manter o HUD coerente.
-    if agora - ultimo_tempo_inferencia >= INTERVALO_INFERENCIA:
-        ultimo_tempo_inferencia = agora
-        angulo_bruto, razao_pescoco, pontos = detectar_metricas_postura(frame, LIMIAR_CONFIANCA)
+    status_texto = "Procurando usuario..."
+    cor_alerta = (255, 255, 255)
 
-        if angulo_bruto is not None and razao_pescoco is not None:
-            pontos_atuais = pontos
+    if angulo_bruto is not None and razao_pescoco is not None:
+        x_orelha, y_orelha, x_ombro_esq, y_ombro_esq, x_ombro_dir, y_ombro_dir = pontos
 
-            # Suavização temporal (média móvel)
-            historico_angulos.append(angulo_bruto)
-            historico_razoes.append(razao_pescoco)
-            angulo = sum(historico_angulos) / len(historico_angulos)
-            razao = sum(historico_razoes) / len(historico_razoes)
-
-            # Componente lateral: desvio do ângulo em relação à baseline
-            desvio_angulo = abs(angulo - baseline_angulo)
-
-            # Componente de "queda de cabeça": quanto a razão pescoço/ombros
-            # encolheu em relação à baseline (só interessa quando DIMINUI)
-            queda_razao = (baseline_razao - razao) / baseline_razao
-
-            postura_ruim = desvio_angulo > LIMIAR_DESVIO_ANGULO or queda_razao > LIMIAR_QUEDA_RAZAO
-
-            if postura_ruim:
-                if tempo_inicio_ruim is None:
-                    tempo_inicio_ruim = agora
-                if agora - tempo_inicio_ruim > TEMPO_CONFIRMACAO_ALERTA:
-                    status_texto = f"ALERTA: POSTURA INCORRETA (ang {int(desvio_angulo)}° / queda {queda_razao*100:.0f}%)"
-                    cor_alerta = (0, 0, 255)  # Vermelho
-                else:
-                    status_texto = f"ATENCAO... (ang {int(desvio_angulo)}° / queda {queda_razao*100:.0f}%)"
-                    cor_alerta = (0, 255, 255)  # Amarelo
-            else:
-                tempo_inicio_ruim = None
-                status_texto = f"POSTURA CORRETA (ang {int(desvio_angulo)}° / queda {queda_razao*100:.0f}%)"
-                cor_alerta = (0, 255, 0)  # Verde
-        else:
-            # Sem detecção confiável: zera os históricos para não misturar leituras antigas
-            historico_angulos.clear()
-            historico_razoes.clear()
-            tempo_inicio_ruim = None
-            status_texto = "Procurando usuario..."
-            cor_alerta = (255, 255, 255)
-            pontos_atuais = None
-
-    # Desenha o overlay todo frame (mesmo sem inferência nova agora),
-    # usando o último resultado conhecido — mantém o vídeo fluido
-    if pontos_atuais is not None:
-        x_orelha, y_orelha, x_ombro_esq, y_ombro_esq, x_ombro_dir, y_ombro_dir = pontos_atuais
+        # Desenha os pontos e as linhas de referência no corpo
         cv2.circle(frame, (x_orelha, y_orelha), 6, (255, 0, 0), -1)
         cv2.circle(frame, (x_ombro_esq, y_ombro_esq), 6, (0, 255, 255), -1)
         cv2.circle(frame, (x_ombro_dir, y_ombro_dir), 6, (0, 255, 255), -1)
         cv2.line(frame, (x_orelha, y_orelha), (x_ombro_esq, y_ombro_esq), (255, 255, 255), 2)
         cv2.line(frame, (x_ombro_esq, y_ombro_esq), (x_ombro_dir, y_ombro_dir), (255, 255, 255), 1)
+
+        # Suavização temporal (média móvel)
+        historico_angulos.append(angulo_bruto)
+        historico_razoes.append(razao_pescoco)
+        angulo = sum(historico_angulos) / len(historico_angulos)
+        razao = sum(historico_razoes) / len(historico_razoes)
+
+        # Componente lateral: desvio do ângulo em relação à baseline
+        desvio_angulo = abs(angulo - baseline_angulo)
+
+        # Componente de "queda de cabeça": quanto a razão pescoço/ombros
+        # encolheu em relação à baseline (só interessa quando DIMINUI)
+        queda_razao = (baseline_razao - razao) / baseline_razao
+
+        postura_ruim = desvio_angulo > LIMIAR_DESVIO_ANGULO or queda_razao > LIMIAR_QUEDA_RAZAO
+
+        if postura_ruim:
+            contador_ma_postura += 1
+            if contador_ma_postura > 15:  # ~ meio segundo a 30fps
+                status_texto = f"ALERTA: POSTURA INCORRETA (ang {int(desvio_angulo)}° / queda {queda_razao*100:.0f}%)"
+                cor_alerta = (0, 0, 255)  # Vermelho
+            else:
+                status_texto = f"ATENCAO... (ang {int(desvio_angulo)}° / queda {queda_razao*100:.0f}%)"
+                cor_alerta = (0, 255, 255)  # Amarelo
+        else:
+            contador_ma_postura = max(0, contador_ma_postura - 1)
+            status_texto = f"POSTURA CORRETA (ang {int(desvio_angulo)}° / queda {queda_razao*100:.0f}%)"
+            cor_alerta = (0, 255, 0)  # Verde
+    else:
+        # Sem detecção confiável: zera os históricos para não misturar leituras antigas
+        historico_angulos.clear()
+        historico_razoes.clear()
 
     # Exibe o status na tela
     cv2.putText(frame, status_texto, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, cor_alerta, 2, cv2.LINE_AA)
