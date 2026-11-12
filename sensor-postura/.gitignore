@@ -1,0 +1,4 @@
+logs/
+videos/*
+!videos/.gitkeep
+__pycache__/
