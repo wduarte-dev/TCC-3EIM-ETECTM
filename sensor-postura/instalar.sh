@@ -30,9 +30,10 @@ EOF
 
 PY="${1:-}"
 if [ -z "$PY" ]; then
-    for candidato in python3.11 python3; do
-        if command -v "$candidato" >/dev/null && testar_python "$(command -v "$candidato")"; then
-            PY="$(command -v "$candidato")"
+    for candidato in "$HOME/venv-tcc/bin/python" python3.11 python3; do
+        caminho="$(command -v "$candidato" 2>/dev/null || true)"
+        if [ -n "$caminho" ] && testar_python "$caminho"; then
+            PY="$caminho"
             break
         fi
     done
