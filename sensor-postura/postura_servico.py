@@ -6,11 +6,16 @@ O que mudou em relação ao main-otimizado.py:
 - Roda SEM TELA: o status sai no terminal (ou no journal do systemd) pela
   função mostrar_status(). Quando o display OLED estiver pronto, é só essa
   função que muda.
-- Calibração AUTOMÁTICA ao iniciar (contagem regressiva), sem precisar de ENTER.
+- Calibração SOB DEMANDA: ao ligar (e ao voltar pra câmera ao vivo), fica em
+  "aguardando calibração" sem analisar nada, até o usuário rodar
+  `postura recalibrar`. Aí vem uma contagem de 10 s e a coleta.
+  Exceção: se o programa reiniciar no mesmo boot (travou e o systemd religou),
+  reaproveita a última baseline salva.
 - NUNCA encerra sozinho: se a câmera cair, tenta reabrir; se um vídeo acabar,
   volta pra câmera ao vivo.
-- Recebe ordens do comando `postura` (status, live, video, recalibrar) por um
-  socket Unix, sem precisar reiniciar o programa.
+- Recebe ordens do comando `postura` (status, live, video, recalibrar, gravar)
+  por um socket Unix, sem precisar reiniciar o programa.
+- Grava vídeos de teste com a própria webcam (`postura gravar N`).
 - Grava um log CSV por dia na pasta logs/.
 - Janela com o vídeo é OPCIONAL (--preview), pra debug via `ssh -X`.
 
@@ -40,11 +45,12 @@ import cv2
 import numpy as np
 
 from postura_config import (
-    CAMINHO_MODELO, DIR_VIDEOS, DIR_LOGS, CAMINHO_SOCKET,
+    CAMINHO_MODELO, DIR_VIDEOS, DIR_LOGS, CAMINHO_SOCKET, ARQUIVO_BASELINE,
     INDICE_CAMERA, LARGURA, ALTURA,
     LIMIAR_CONFIANCA, LIMIAR_DESVIO_ANGULO, LIMIAR_QUEDA_RAZAO,
     DURACAO_CALIBRACAO, HISTORICO_TAMANHO, FRAMES_PARA_ALERTA,
-    CONTAGEM_CALIBRACAO, INTERVALO_PRINT_S, MAX_FALHAS_LEITURA, ESPERA_CAMERA_S,
+    CONTAGEM_CALIBRACAO, CONTAGEM_GRAVACAO, GRAVACAO_MAX_S,
+    INTERVALO_PRINT_S, MAX_FALHAS_LEITURA, ESPERA_CAMERA_S,
     listar_videos,
 )
 
@@ -288,8 +294,61 @@ class LogCSV:
 
 
 # =====================================================================
+# BASELINE SALVA — só vale dentro do mesmo boot
+# =====================================================================
+
+def horario_do_boot():
+    """Momento (epoch) em que o Pi ligou, lido do kernel. None se não der pra saber."""
+    try:
+        with open("/proc/stat", encoding="utf-8") as f:
+            for linha in f:
+                if linha.startswith("btime"):
+                    return float(linha.split()[1])
+    except OSError:
+        pass
+    return None
+
+
+def salvar_baseline(baseline_angulo, baseline_razao):
+    dados = {
+        "baseline_angulo": baseline_angulo,
+        "baseline_razao": baseline_razao,
+        "salvo_em": time.time(),
+    }
+    temporario = ARQUIVO_BASELINE + ".tmp"
+    try:
+        with open(temporario, "w", encoding="utf-8") as f:
+            json.dump(dados, f, indent=2)
+        os.replace(temporario, ARQUIVO_BASELINE)  # troca atômica: nunca fica meio escrito
+    except OSError as erro:
+        print(f"Aviso: não consegui salvar a baseline: {erro}", flush=True)
+
+
+def carregar_baseline_do_mesmo_boot():
+    """
+    Devolve (angulo, razao) se a baseline salva for de DEPOIS do último boot,
+    ou seja, o programa só reiniciou (travou, `postura reiniciar`...).
+    Se o Pi acabou de ligar, devolve None: o usuário tem que recalibrar.
+    """
+    boot = horario_do_boot()
+    if boot is None or not os.path.isfile(ARQUIVO_BASELINE):
+        return None
+    try:
+        with open(ARQUIVO_BASELINE, encoding="utf-8") as f:
+            dados = json.load(f)
+        if dados["salvo_em"] > boot:
+            return float(dados["baseline_angulo"]), float(dados["baseline_razao"])
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
+# =====================================================================
 # MONITOR — o "motor" que nunca para
 # =====================================================================
+
+TEXTO_AGUARDANDO = "AGUARDANDO CALIBRAÇÃO (digite: postura recalibrar)"
+
 
 class MonitorPostura:
 
@@ -302,12 +361,22 @@ class MonitorPostura:
         self.preview = preview
         self.video_inicial = video_inicial
 
+        # Baseline guardada pra próxima sessão AO VIVO, sem recalibrar.
+        # Vem de: reinício no mesmo boot, ou queda/reconexão da câmera.
+        self._baseline_guardada = None if video_inicial else carregar_baseline_do_mesmo_boot()
+        if self._baseline_guardada:
+            print("Reinício no mesmo boot: reaproveitando a última baseline.", flush=True)
+        self._recalibrar_pendente = False
+
         self.estado = {
             "fonte": "-", "video": None, "status": "INICIANDO", "texto": "Iniciando...",
             "desvio_angulo": None, "queda_razao_pct": None,
             "baseline_angulo": None, "baseline_razao": None,
             "fps": 0.0, "atualizado": None,
             "inicio": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            # contadores que o `postura` acompanha pra saber quando terminou
+            "calibracao": {"id": 0, "ok": None, "msg": ""},
+            "gravacao": {"id": 0, "ok": None, "msg": "", "arquivo": None},
         }
         self._status_impresso = None
         self._texto_impresso = None
@@ -319,7 +388,8 @@ class MonitorPostura:
         """
         ÚNICO ponto de saída do status pro usuário.
         Hoje: imprime no terminal / journal (sem inundar: só quando muda ou a
-        cada INTERVALO_PRINT_S). Futuro: desenhar no display OLED aqui.
+        cada INTERVALO_PRINT_S). Futuro: desenhar no display OLED aqui
+        (ex: status AGUARDANDO_CALIBRACAO → "Aguardando recalibração...").
         """
         agora = time.time()
         with self.lock:
@@ -363,6 +433,12 @@ class MonitorPostura:
             self.rodando = False
         elif tecla == ord('r'):
             self.comandos.put(("recalibrar", None))
+
+    def _registrar_fim(self, chave, **campos):
+        """Marca o fim de uma calibração/gravação (o `postura` espera por isso)."""
+        with self.lock:
+            anterior = self.estado[chave]
+            self.estado[chave] = dict(anterior, id=anterior["id"] + 1, **campos)
 
     # ---------------- utilidades ----------------
 
@@ -409,15 +485,16 @@ class MonitorPostura:
 
     def _sessao(self, tipo, arquivo):
         """Abre uma fonte (câmera ou vídeo), monitora e devolve a próxima fonte."""
-        with self.lock:  # fonte nova: descarta baseline/medidas da anterior
+        with self.lock:  # fonte nova: descarta medidas da anterior
             self.estado.update(baseline_angulo=None, baseline_razao=None,
                                desvio_angulo=None, queda_razao_pct=None, fps=0.0)
         if tipo == "live":
             resultado = self._esperar_camera()
-            if not isinstance(resultado, cv2.VideoCapture):
+            if isinstance(resultado, tuple):
                 return resultado  # chegou um pedido de vídeo enquanto esperava a câmera
             cap, fps_video = resultado, None
         else:
+            self._baseline_guardada = None  # vídeo novo: a baseline ao vivo não vale mais
             cap = cv2.VideoCapture(self._caminho_video(arquivo))
             if not cap.isOpened():
                 cap.release()
@@ -440,8 +517,11 @@ class MonitorPostura:
         tentativa = 0
         while self.rodando:
             comando = self._pegar_comando()
-            if comando and comando[0] == "video":
-                return comando
+            if comando:
+                if comando[0] == "video":
+                    return comando
+                if comando[0] == "recalibrar":
+                    self._recalibrar_pendente = True  # calibra assim que a câmera voltar
             cap = abrir_camera()
             if cap is not None:
                 if cap.read()[0]:
@@ -461,8 +541,7 @@ class MonitorPostura:
 
     def _calibrar(self, cap, tipo, fps_video):
         """
-        Calibração automática.
-        Ao vivo: contagem regressiva + DURACAO_CALIBRACAO segundos de coleta.
+        Ao vivo: contagem regressiva de CONTAGEM_CALIBRACAO s + DURACAO_CALIBRACAO s de coleta.
         Vídeo: usa os primeiros DURACAO_CALIBRACAO segundos DO VÍDEO (contados
         em frames, porque o Pi processa mais devagar que o tempo real).
         Retorna ("ok", (b_ang, b_razao)) | ("falhou",) | ("fim",) | ("trocar", comando)
@@ -535,7 +614,8 @@ class MonitorPostura:
                 restante = max(0.0, (frames_alvo - frames_lidos) / fps_video)
             self.mostrar_status(
                 "CALIBRANDO",
-                f"Calibrando... {restante:0.1f}s ({len(amostras_angulo)} amostras válidas)",
+                f"Calibrando... fique parado ({math.ceil(restante)}s)",
+                forcar=True,
             )
             self._mostrar_preview(frame, [(f"Calibrando... {restante:0.1f}s", (0, 255, 0))])
 
@@ -543,25 +623,26 @@ class MonitorPostura:
             return ("fim",)
 
         if len(amostras_angulo) < 5:
-            self.mostrar_status(
-                "CALIBRACAO_FALHOU",
-                "Calibração falhou (poucas detecções válidas). Confira se você aparece na câmera.",
-                forcar=True,
-            )
+            msg = "Calibração falhou (poucas detecções válidas). Confira se você aparece na câmera."
+            self.mostrar_status("CALIBRACAO_FALHOU", msg, forcar=True)
+            self._registrar_fim("calibracao", ok=False, msg=msg)
             return ("falhou",)
 
         baseline_angulo = sum(amostras_angulo) / len(amostras_angulo)
         baseline_razao = sum(amostras_razao) / len(amostras_razao)
 
+        if tipo == "live":
+            salvar_baseline(baseline_angulo, baseline_razao)
+
+        msg = f"Baseline calibrada: ângulo={baseline_angulo:.1f}°  razão_pescoço={baseline_razao:.3f}"
         with self.lock:
             fonte, video = self.estado["fonte"], self.estado["video"]
         self.mostrar_status(
-            "CALIBRADO",
-            f"Baseline calibrada: ângulo={baseline_angulo:.1f}°  razão_pescoço={baseline_razao:.3f}",
-            forcar=True,
+            "CALIBRADO", msg, forcar=True,
             baseline_angulo=round(baseline_angulo, 2),
             baseline_razao=round(baseline_razao, 4),
         )
+        self._registrar_fim("calibracao", ok=True, msg=msg)
         self.log.registrar(
             data_hora=datetime.now().isoformat(timespec="milliseconds"),
             fonte=fonte, video=video or "", status="CALIBRADO",
@@ -569,9 +650,106 @@ class MonitorPostura:
         )
         return ("ok", (baseline_angulo, baseline_razao))
 
+    def _gravar(self, cap, segundos):
+        """
+        Grava um vídeo de teste da webcam em videos/. Durante a gravação a
+        análise de postura fica pausada (sobra CPU pro Pi gravar liso).
+        Grava a imagem crua (sem espelhar): quando o vídeo for analisado, ele
+        é espelhado igual à câmera ao vivo.
+        """
+        nome_base = datetime.now().strftime("gravacao_%Y%m%d_%H%M%S")
+
+        # --- contagem: dá tempo de se ajeitar E mede o FPS real da câmera ---
+        inicio_contagem = time.time()
+        fim_contagem = inicio_contagem + CONTAGEM_GRAVACAO
+        frames_contagem, ultimo_frame = 0, None
+        while self.rodando and time.time() < fim_contagem:
+            retorno, frame = cap.read()
+            if retorno and frame is not None:
+                frames_contagem += 1
+                ultimo_frame = frame
+                if self.preview:
+                    self._mostrar_preview(cv2.flip(frame, 1), [("Gravacao comeca em breve", (0, 255, 255))])
+            segundos_contagem = math.ceil(fim_contagem - time.time())
+            self.mostrar_status(
+                "GRAVACAO_CONTAGEM",
+                f"Gravação começa em {max(segundos_contagem, 1)}s. "
+                f"Fique na postura CORRETA nos primeiros {DURACAO_CALIBRACAO}s!",
+                forcar=True,
+            )
+
+        if not self.rodando:
+            return
+        if ultimo_frame is None:
+            msg = "Gravação falhou: a câmera não entregou imagem."
+            self.mostrar_status("GRAVACAO_FALHOU", msg, forcar=True)
+            self._registrar_fim("gravacao", ok=False, msg=msg, arquivo=None)
+            return
+
+        # FPS medido de verdade, pra o vídeo não sair acelerado nem em câmera lenta
+        fps = frames_contagem / max(time.time() - inicio_contagem, 1e-6)
+        fps = min(max(fps, 5.0), 60.0)
+        altura, largura = ultimo_frame.shape[:2]
+
+        nome = nome_base + ".mp4"
+        caminho = os.path.join(DIR_VIDEOS, nome)
+        escritor = cv2.VideoWriter(caminho, cv2.VideoWriter_fourcc(*"mp4v"), fps, (largura, altura))
+        if not escritor.isOpened():  # sem codec mp4 nesse OpenCV: cai pro AVI/MJPG
+            escritor.release()
+            nome = nome_base + ".avi"
+            caminho = os.path.join(DIR_VIDEOS, nome)
+            escritor = cv2.VideoWriter(caminho, cv2.VideoWriter_fourcc(*"MJPG"), fps, (largura, altura))
+
+        # --- gravação ---
+        inicio = time.time()
+        frames = 0
+        while self.rodando and time.time() - inicio < segundos:
+            retorno, frame = cap.read()
+            if not retorno or frame is None:
+                time.sleep(0.02)
+                continue
+            escritor.write(frame)
+            frames += 1
+            restante = math.ceil(segundos - (time.time() - inicio))
+            self.mostrar_status("GRAVANDO", f"Gravando... {max(restante, 0)}s", forcar=True)
+            if self.preview:
+                self._mostrar_preview(cv2.flip(frame, 1), [(f"REC {max(restante, 0)}s", (0, 0, 255))])
+        escritor.release()
+
+        if frames == 0:
+            try:
+                os.remove(caminho)
+            except OSError:
+                pass
+            msg = "Gravação falhou: nenhum frame gravado."
+            self.mostrar_status("GRAVACAO_FALHOU", msg, forcar=True)
+            self._registrar_fim("gravacao", ok=False, msg=msg, arquivo=None)
+            return
+
+        msg = f"Vídeo salvo: videos/{nome} ({frames} frames, {fps:.0f} fps)"
+        self.mostrar_status("GRAVACAO_OK", msg, forcar=True)
+        self._registrar_fim("gravacao", ok=True, msg=msg, arquivo=nome)
+
     def _monitorar(self, cap, tipo, fps_video):
-        """Calibra e monitora até chegar um comando de troca ou a fonte acabar."""
+        """
+        Laço de uma sessão. Estados:
+          - sem baseline e sem pedido de calibrar → AGUARDANDO (não analisa nada)
+          - calibrando
+          - com baseline → monitorando a postura
+        Devolve a próxima fonte quando chega um comando de troca ou a fonte acaba.
+        """
         baseline = None
+        if tipo == "live" and self._baseline_guardada:
+            baseline = self._baseline_guardada
+            with self.lock:
+                self.estado["baseline_angulo"] = round(baseline[0], 2)
+                self.estado["baseline_razao"] = round(baseline[1], 4)
+        self._baseline_guardada = None
+
+        # vídeo calibra sozinho (com os primeiros segundos dele); ao vivo, só sob pedido
+        precisa_calibrar = (tipo == "video") or self._recalibrar_pendente
+        self._recalibrar_pendente = False
+
         contador_ma_postura = 0
         historico_angulos = deque(maxlen=HISTORICO_TAMANHO)
         historico_razoes = deque(maxlen=HISTORICO_TAMANHO)
@@ -580,8 +758,9 @@ class MonitorPostura:
         ultimo_frame_t = None
 
         while self.rodando:
-            # --- (re)calibração ---
-            if baseline is None:
+            # --- calibração pedida ---
+            if precisa_calibrar:
+                precisa_calibrar = False
                 resultado = self._calibrar(cap, tipo, fps_video)
                 if resultado[0] == "trocar":
                     return resultado[1]
@@ -590,22 +769,45 @@ class MonitorPostura:
                 if resultado[0] == "falhou":
                     if tipo == "video":
                         return ("live", None)
-                    self._dormir(1)
-                    continue  # ao vivo: tenta calibrar de novo
-                baseline_angulo, baseline_razao = resultado[1]
-                baseline = True
+                    baseline = None  # ao vivo: volta a aguardar outro `postura recalibrar`
+                    continue
+                baseline = resultado[1]
                 contador_ma_postura = 0
                 historico_angulos.clear()
                 historico_razoes.clear()
                 ultimo_frame_t = None
+                continue
 
             # --- comandos vindos do `postura` ---
             comando = self._pegar_comando()
             if comando:
                 if comando[0] == "recalibrar":
-                    baseline = None
+                    precisa_calibrar = True
                     continue
-                return comando  # ("live", None) ou ("video", arquivo)
+                if comando[0] == "gravar":
+                    self._gravar(cap, comando[1])
+                    ultimo_frame_t = None
+                    continue
+                return comando  # ("live", None) ou ("video", arquivo): a próxima sessão aguarda
+
+            # --- AGUARDANDO: câmera ligada, mas sem analisar nada ---
+            if baseline is None:
+                frame = self._ler_frame(cap)
+                if frame is None:
+                    falhas += 1
+                    if falhas >= MAX_FALHAS_LEITURA:
+                        print("Câmera parou de responder. Reabrindo...", flush=True)
+                        return ("live", None)
+                    time.sleep(0.05)
+                    continue
+                falhas = 0
+                self.mostrar_status("AGUARDANDO_CALIBRACAO", TEXTO_AGUARDANDO)
+                self._mostrar_preview(frame, [("Aguardando calibracao", (255, 255, 255)),
+                                              ("postura recalibrar  /  tecla r", (255, 255, 255))])
+                time.sleep(0.1)  # sem inferência aqui: alivia a CPU enquanto espera
+                continue
+
+            baseline_angulo, baseline_razao = baseline
 
             frame = self._ler_frame(cap)
             if frame is None:
@@ -614,7 +816,8 @@ class MonitorPostura:
                     return ("live", None)
                 falhas += 1
                 if falhas >= MAX_FALHAS_LEITURA:
-                    print("Câmera parou de responder. Reabrindo...", flush=True)
+                    print("Câmera parou de responder. Reabrindo (mantendo a baseline)...", flush=True)
+                    self._baseline_guardada = baseline  # mesma câmera, mesma pessoa
                     return ("live", None)
                 time.sleep(0.05)
                 continue
@@ -731,21 +934,45 @@ class MonitorPostura:
 
     def _tratar_comando(self, pedido):
         acao = pedido.get("acao")
+        with self.lock:
+            status_atual = self.estado["status"]
+            fonte_atual = self.estado["fonte"]
+        ocupado = status_atual in ("CONTAGEM", "CALIBRANDO", "GRAVACAO_CONTAGEM", "GRAVANDO")
+
         if acao == "status":
             with self.lock:
-                return {"ok": True, "estado": dict(self.estado)}
+                return {"ok": True, "estado": json.loads(json.dumps(self.estado))}
         if acao == "live":
             self.comandos.put(("live", None))
-            return {"ok": True, "msg": "Voltando pra câmera ao vivo (vai recalibrar)."}
+            return {"ok": True, "msg": "Voltando pra câmera ao vivo. Depois rode: postura recalibrar"}
         if acao == "recalibrar":
+            if ocupado:
+                return {"ok": False, "erro": "Já tem uma calibração ou gravação em andamento. Espera terminar."}
             self.comandos.put(("recalibrar", None))
-            return {"ok": True, "msg": "Recalibrando. Fique na postura correta."}
+            if fonte_atual == "video":
+                return {"ok": True, "msg": f"Recalibrando com os próximos {DURACAO_CALIBRACAO}s do vídeo."}
+            return {"ok": True, "msg": f"Se ajeita! Contagem de {CONTAGEM_CALIBRACAO}s e depois {DURACAO_CALIBRACAO}s parado."}
         if acao == "video":
             nome = os.path.basename(str(pedido.get("arquivo", "")))
             if nome not in listar_videos():
                 return {"ok": False, "erro": f"Vídeo '{nome}' não encontrado na pasta videos/."}
             self.comandos.put(("video", nome))
             return {"ok": True, "msg": f"Trocando pro vídeo '{nome}' (calibra com os primeiros {DURACAO_CALIBRACAO}s dele)."}
+        if acao == "gravar":
+            try:
+                segundos = int(pedido.get("segundos"))
+            except (TypeError, ValueError):
+                return {"ok": False, "erro": "Informe a duração em segundos. Ex: postura gravar 30"}
+            if not DURACAO_CALIBRACAO < segundos <= GRAVACAO_MAX_S:
+                return {"ok": False, "erro": f"A duração tem que ser maior que {DURACAO_CALIBRACAO}s "
+                                             f"(os primeiros {DURACAO_CALIBRACAO}s são a calibração) "
+                                             f"e no máximo {GRAVACAO_MAX_S}s."}
+            if fonte_atual != "live" or status_atual == "SEM_CAMERA":
+                return {"ok": False, "erro": "Só dá pra gravar com a câmera ao vivo funcionando (use: postura live)."}
+            if ocupado:
+                return {"ok": False, "erro": "Já tem uma calibração ou gravação em andamento. Espera terminar."}
+            self.comandos.put(("gravar", segundos))
+            return {"ok": True, "msg": f"Gravação de {segundos}s: contagem de {CONTAGEM_GRAVACAO}s pra se ajeitar."}
         return {"ok": False, "erro": f"comando desconhecido: {acao}"}
 
 

@@ -14,6 +14,11 @@ CAMINHO_MODELO = os.path.join(DIR_BASE, "movenet_lightning.tflite")
 DIR_VIDEOS = os.path.join(DIR_BASE, "videos")
 DIR_LOGS = os.path.join(DIR_BASE, "logs")
 
+# Última baseline calibrada ao vivo. Só é reaproveitada se o programa
+# reiniciar no MESMO boot (ex: travou e o systemd religou). Depois de um
+# boot novo, o sistema sempre aguarda `postura recalibrar`.
+ARQUIVO_BASELINE = os.path.join(DIR_BASE, "baseline.json")
+
 # Canal de comunicação entre o comando `postura` e o serviço (socket Unix).
 # Leva o UID no nome pra cada usuário ter o seu.
 CAMINHO_SOCKET = f"/tmp/postura-{os.getuid()}.sock"
@@ -31,7 +36,9 @@ HISTORICO_TAMANHO = 5         # tamanho da média móvel
 FRAMES_PARA_ALERTA = 15       # frames seguidos de postura ruim até virar ALERTA
 
 # --- Comportamento headless ---
-CONTAGEM_CALIBRACAO = 5       # segundos de contagem regressiva antes de calibrar (ao vivo)
+CONTAGEM_CALIBRACAO = 10      # segundos pra se ajeitar depois do `postura recalibrar` (ao vivo)
+CONTAGEM_GRAVACAO = 5         # segundos pra se ajeitar depois do `postura gravar N`
+GRAVACAO_MAX_S = 600          # duração máxima de uma gravação (10 min)
 INTERVALO_PRINT_S = 5.0       # repete o status no terminal a cada X s, mesmo sem mudança
 MAX_FALHAS_LEITURA = 30       # leituras falhas seguidas da câmera antes de reabrir ela
 ESPERA_CAMERA_S = 3           # intervalo entre tentativas de abrir a câmera

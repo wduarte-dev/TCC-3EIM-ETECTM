@@ -2,3 +2,5 @@ logs/
 videos/*
 !videos/.gitkeep
 __pycache__/
+baseline.json
+baseline.json.tmp
