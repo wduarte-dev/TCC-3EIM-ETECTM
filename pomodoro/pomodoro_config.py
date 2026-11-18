@@ -44,5 +44,6 @@ MENU_B1_TIMEOUT_S = 5.0      # sem clique por esse tempo, o menu fecha sozinho
 # --- Recalibração da voz pelo B1 (reaproveita o sensor-voz/main.py) ---
 CAMINHO_SENSOR_VOZ = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                   "..", "sensor-voz", "main.py")
+CAMINHO_BASELINE_VOZ = os.path.join(os.path.dirname(CAMINHO_SENSOR_VOZ), "baseline_voz.json")
 PREPARO_VOZ_S = 2.0          # "PREPARE-SE" antes de cada gravação de 3 s
 MENSAGEM_FINAL_VOZ_S = 3.0   # quanto tempo "VOZ CALIBRADA/FALHOU" fica na tela

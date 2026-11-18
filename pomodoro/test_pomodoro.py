@@ -229,6 +229,17 @@ class TesteMenuB1(unittest.TestCase):
         m.botao(LONGO)
         self.assertEqual((p.estado, p.restante_s), antes)
 
+    def test_calibrar_antes_da_primeira_vez_e_recalibrar_depois(self):
+        m = MenuB1()
+        m.botao(CURTO)
+        nada = {POSTURA: False, VOZ: False}
+        self.assertEqual(m.texto(calibrado=nada), "CALIBRAR: POSTURA")
+        self.assertEqual(m.texto(True, nada), "SOLTE: CALIB POSTURA")
+        self.assertEqual(m.texto(calibrado={POSTURA: True, VOZ: False}), "RECALIBRAR: POSTURA")
+        m.botao(CURTO)                                   # VOZ, só ela sem baseline
+        self.assertEqual(m.texto(calibrado={POSTURA: True, VOZ: False}), "CALIBRAR: VOZ")
+        self.assertEqual(m.texto(calibrado={POSTURA: False, VOZ: True}), "RECALIBRAR: VOZ")
+
     def test_textos(self):
         m = MenuB1()
         m.botao(CURTO)
@@ -367,7 +378,7 @@ class TesteTela(unittest.TestCase):
     def test_textos_do_b1_e_da_voz_cabem_na_tela(self):
         from PIL import ImageFont
         fonte = self.display._fonte(9)
-        textos = ["RECALIBRAR: POSTURA", "SOLTE: RECAL POSTURA", "RECALIBRAR: VOZ", "SOLTE: RECAL VOZ",
+        textos = ["RECALIBRAR: POSTURA", "SOLTE: RECAL POSTURA", "CALIBRAR: POSTURA", "SOLTE: CALIB POSTURA", "RECALIBRAR: VOZ", "SOLTE: RECAL VOZ",
                   "VOZ 1/2: PREPARE-SE", "VOZ 1/2: FALE AAAA", "VOZ 2/2: ANALISANDO",
                   "VOZ CALIBRADA", "VOZ FALHOU", "SEM MIC/PRAAT", "VOZ: INICIANDO"]
         for t in textos:

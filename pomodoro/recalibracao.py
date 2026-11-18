@@ -60,10 +60,15 @@ class MenuB1:
         self.opcao = None
         self._restante_s = 0.0
 
-    def texto(self, segurando_longo=False):
-        """Linha de baixo da tela (≤ 128 px, sem acento) ou None se o menu está fechado."""
+    def texto(self, segurando_longo=False, calibrado=None):
+        """
+        Linha de baixo da tela (≤ 128 px, sem acento) ou None se o menu está fechado.
+        calibrado = {POSTURA: bool, VOZ: bool}: quem ainda não foi calibrada aparece
+        como CALIBRAR; depois da primeira vez, vira RECALIBRAR. (None = todas calibradas.)
+        """
         if not self.aberto:
             return None
+        ja = True if calibrado is None else calibrado.get(self.opcao, True)
         if segurando_longo:
-            return f"SOLTE: RECAL {_NOME[self.opcao]}"
-        return f"RECALIBRAR: {_NOME[self.opcao]}"
+            return f"SOLTE: {'RECAL' if ja else 'CALIB'} {_NOME[self.opcao]}"
+        return f"{'RECALIBRAR' if ja else 'CALIBRAR'}: {_NOME[self.opcao]}"

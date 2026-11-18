@@ -13,14 +13,15 @@ Botões:
                  rodando/pausado: longo pausa/retoma, muito longo reinicia
 """
 import argparse
+import os
 import queue
 import signal
 import sys
 import time
 
-from pomodoro_config import ATUALIZACAO_TELA_S, PISCAR_MUDANCA_FASE_S
+from pomodoro_config import ATUALIZACAO_TELA_S, PISCAR_MUDANCA_FASE_S, CAMINHO_BASELINE_VOZ
 from pomodoro_logica import Pomodoro, EV_FASE_MUDOU, LONGO, MUITO_LONGO
-from recalibracao import MenuB1, ACAO_RECALIBRAR, POSTURA
+from recalibracao import MenuB1, ACAO_RECALIBRAR, POSTURA, VOZ
 from postura_cliente import MonitorPostura, texto_curto
 from voz_cliente import RecalibradorVoz, VozSimulada
 from display import criar_display, desenhar
@@ -103,7 +104,11 @@ def main():
             segurando = botoes.aperto_b2.tipo_se_soltar_agora()
             segurando_b1 = botoes.aperto_b1.tipo_se_soltar_agora() in (LONGO, MUITO_LONGO)
             # Linha de baixo: voz recalibrando > menu do B1 > postura
-            texto_baixo = voz.mensagem or menu.texto(segurando_b1)
+            calibrado = {   # sem baseline/calibração ainda, o menu mostra CALIBRAR em vez de RECALIBRAR
+                POSTURA: (estado_postura or {}).get("status") != "AGUARDANDO_CALIBRACAO",
+                VOZ: os.path.isfile(CAMINHO_BASELINE_VOZ),
+            }
+            texto_baixo = voz.mensagem or menu.texto(segurando_b1, calibrado)
             imagem = desenhar(
                 pomo,
                 texto_baixo or texto_curto(estado_postura),

@@ -26,7 +26,7 @@ segurado, a tela mostra o que vai acontecer ao soltar (`SOLTE: PAUSAR`, `SOLTE: 
 
 | B1 | O que acontece |
 |---|---|
-| **curto** | abre o menu na linha de baixo (`RECALIBRAR: POSTURA`); cada novo clique alterna **POSTURA ↔ VOZ** |
+| **curto** | abre o menu na linha de baixo (`RECALIBRAR: POSTURA`); cada novo clique alterna **POSTURA ↔ VOZ**. Quem ainda não foi calibrada (postura `AGUARDANDO_CALIBRACAO`; voz sem `baseline_voz.json`) aparece como `CALIBRAR: ...`; depois da primeira vez vira `RECALIBRAR: ...` |
 | **longo** (≥ 1 s) | **recalibra a opção mostrada** (enquanto segura aparece `SOLTE: RECAL ...`); o menu fecha |
 | sem clique por 5 s | o menu fecha sozinho (`MENU_B1_TIMEOUT_S`) e a linha de baixo volta a mostrar a postura |
 | longo com o menu fechado | ignorado (aperto longo sem querer não recalibra nada) |
