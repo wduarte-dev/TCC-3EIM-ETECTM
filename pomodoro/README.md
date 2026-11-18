@@ -126,6 +126,6 @@ pelo tempo desejado = B2 (1 s = longo, 3 s = muito longo).
 - O aspecto da tela no OLED depende da fonte instalada no Pi (usa DejaVu Sans Bold se existir,
   senão a fonte padrão do Pillow).
 - Se o serviço de postura já estiver calibrando, ele recusa o pedido do B1 (não faz nada).
-- A recalibração da voz sobrescreve `sensor-voz/baseline_voz.json` (o arquivo está versionado no repo).
+- A calibração da voz grava `sensor-voz/baseline_voz.json`, que **não é versionado** (`.gitignore`): cada máquina/mic tem a sua. Sem ele o menu do B1 mostra `CALIBRAR: VOZ`. Se o Pi já tinha o arquivo vindo do repo, o `git pull` apaga a cópia (aí é só calibrar de novo).
 - Menu do B1 com fechamento em 5 s e o limiar de 1 s do "longo" são escolhas do projeto, sem validação própria.
 - A recalibração da voz pelo B1 foi testada só com a voz simulada e testes automáticos; mic e Praat reais ainda não.
