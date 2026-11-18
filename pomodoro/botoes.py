@@ -6,10 +6,10 @@ Botões. Duas partes:
 2. Backends que geram os eventos de verdade:
      - BotoesGPIO:    gpiozero, no Pi (B1 = GPIO17, B2 = GPIO27)
      - BotoesTeclado: digitar no terminal, pra testar no notebook
-         1  → B1 (recalibrar)      2c → B2 curto
-         2l → B2 longo             2m → B2 muito longo
+         1c → B1 curto             2c → B2 curto
+         1l → B1 longo             2l → B2 longo       2m → B2 muito longo
 
-Todos mandam os eventos pra uma fila (queue.Queue): ("B1", None) ou ("B2", tipo).
+Todos mandam os eventos pra uma fila (queue.Queue): ("B1", tipo) ou ("B2", tipo).
 Assim o laço principal consome na própria thread, sem corrida.
 """
 import sys
@@ -64,22 +64,24 @@ class ClassificadorAperto:
 
 
 class BotoesGPIO:
-    """B1 age ao APERTAR; B2 age ao SOLTAR (porque depende da duração)."""
+    """B1 e B2 agem ao SOLTAR (porque dependem da duração do aperto)."""
 
     def __init__(self, fila):
         from gpiozero import Button   # import tardio: só existe/funciona no Pi
         self.fila = fila
+        self.aperto_b1 = ClassificadorAperto()
         self.aperto_b2 = ClassificadorAperto()
         self._b1 = Button(GPIO_B1, pull_up=True, bounce_time=DEBOUNCE_S)
         self._b2 = Button(GPIO_B2, pull_up=True, bounce_time=DEBOUNCE_S)
-        self._b1.when_pressed = lambda: self.fila.put(("B1", None))
+        self._b1.when_pressed = self.aperto_b1.apertou
+        self._b1.when_released = lambda: self._soltou("B1", self.aperto_b1)
         self._b2.when_pressed = self.aperto_b2.apertou
-        self._b2.when_released = self._b2_soltou
+        self._b2.when_released = lambda: self._soltou("B2", self.aperto_b2)
 
-    def _b2_soltou(self):
-        tipo = self.aperto_b2.soltou()
+    def _soltou(self, nome, aperto):
+        tipo = aperto.soltou()
         if tipo:
-            self.fila.put(("B2", tipo))
+            self.fila.put((nome, tipo))
 
     def fechar(self):
         self._b1.close()
@@ -89,18 +91,19 @@ class BotoesGPIO:
 class BotoesTeclado:
     """Simula os botões digitando no terminal (uma linha + Enter por aperto)."""
 
-    COMANDOS = {"1": ("B1", None), "2c": ("B2", CURTO),
-                "2l": ("B2", LONGO), "2m": ("B2", MUITO_LONGO)}
+    COMANDOS = {"1c": ("B1", CURTO), "1l": ("B1", LONGO),
+                "2c": ("B2", CURTO), "2l": ("B2", LONGO), "2m": ("B2", MUITO_LONGO)}
 
     def __init__(self, fila):
         self.fila = fila
-        self.aperto_b2 = ClassificadorAperto()   # sem uso aqui; mantém a mesma interface
+        self.aperto_b1 = ClassificadorAperto()   # sem uso aqui; mantém a mesma interface
+        self.aperto_b2 = ClassificadorAperto()
         self._ativo = True
         threading.Thread(target=self._ler, daemon=True).start()
 
     def _ler(self):
-        print("Botões simulados:  1 = B1 recalibrar | 2c = B2 curto | 2l = B2 longo | "
-              "2m = B2 muito longo | q = sair", flush=True)
+        print("Botões simulados:  1c = B1 curto | 1l = B1 longo | 2c = B2 curto | "
+              "2l = B2 longo | 2m = B2 muito longo | q = sair", flush=True)
         while self._ativo:
             linha = sys.stdin.readline()
             if linha == "":          # stdin fechou

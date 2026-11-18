@@ -3,6 +3,8 @@ Testes (sem Pi, sem hardware). Rodar de dentro da pasta pomodoro/:
 
     python -m unittest -v
 """
+import contextlib
+import io
 import json
 import os
 import socket
@@ -16,6 +18,8 @@ from pomodoro_logica import (
     EV_FASE_MUDOU, EV_INICIOU, EV_PAUSOU, EV_RETOMOU, EV_REINICIOU, EV_PRESET_MUDOU,
 )
 from botoes import classificar, ClassificadorAperto
+from recalibracao import MenuB1, POSTURA, VOZ, ACAO_RECALIBRAR
+from voz_cliente import RecalibradorVoz
 
 PRESETS = [
     {"nome": "A", "foco": 2, "pausa": 1, "pausa_longa": 3},
@@ -162,6 +166,139 @@ class TestePausaEReinicio(unittest.TestCase):
         self.assertEqual(p.rotulo_aperto(LONGO), "RETOMAR")
 
 
+class TesteMenuB1(unittest.TestCase):
+    def test_curto_abre_em_postura_e_alterna_com_voz(self):
+        m = MenuB1(timeout_s=5)
+        self.assertFalse(m.aberto)
+        self.assertIsNone(m.botao(CURTO))
+        self.assertEqual(m.opcao, POSTURA)
+        m.botao(CURTO)
+        self.assertEqual(m.opcao, VOZ)
+        m.botao(CURTO)
+        self.assertEqual(m.opcao, POSTURA)
+
+    def test_longo_executa_a_opcao_mostrada_e_fecha_o_menu(self):
+        for cliques, esperada in ((1, POSTURA), (2, VOZ)):
+            m = MenuB1(timeout_s=5)
+            for _ in range(cliques):
+                m.botao(CURTO)
+            self.assertEqual(m.botao(LONGO), (ACAO_RECALIBRAR, esperada))
+            self.assertFalse(m.aberto)            # volta ao estado inicial
+
+    def test_muito_longo_conta_como_longo(self):
+        m = MenuB1()
+        m.botao(CURTO)
+        self.assertEqual(m.botao(MUITO_LONGO), (ACAO_RECALIBRAR, POSTURA))
+
+    def test_longo_com_menu_fechado_e_ignorado(self):
+        m = MenuB1()
+        self.assertIsNone(m.botao(LONGO))
+        self.assertFalse(m.aberto)
+
+    def test_menu_fecha_sozinho_sem_clique(self):
+        m = MenuB1(timeout_s=5)
+        m.botao(CURTO)
+        m.tick(4.9)
+        self.assertTrue(m.aberto)
+        m.botao(CURTO)                            # novo clique renova o prazo
+        m.tick(4.9)
+        self.assertTrue(m.aberto)
+        m.tick(0.2)
+        self.assertFalse(m.aberto)
+        self.assertIsNone(m.texto())
+
+    def test_ocupado_ignora_o_b1_e_nao_fecha_o_menu_por_tempo(self):
+        m = MenuB1(timeout_s=5)
+        m.botao(CURTO)
+        m.ocupado = True
+        self.assertIsNone(m.botao(LONGO))
+        self.assertIsNone(m.botao(CURTO))
+        self.assertEqual(m.opcao, POSTURA)
+        m.tick(100)
+        self.assertTrue(m.aberto)
+
+    def test_nao_mexe_no_pomodoro(self):
+        # o B1 nem conhece o Pomodoro; este teste documenta a regra
+        p = novo()
+        p.botao(LONGO)
+        p.tick(30)
+        antes = (p.estado, p.restante_s)
+        m = MenuB1()
+        m.botao(CURTO)
+        m.botao(CURTO)
+        m.botao(LONGO)
+        self.assertEqual((p.estado, p.restante_s), antes)
+
+    def test_textos(self):
+        m = MenuB1()
+        m.botao(CURTO)
+        self.assertEqual(m.texto(), "RECALIBRAR: POSTURA")
+        self.assertEqual(m.texto(segurando_longo=True), "SOLTE: RECAL POSTURA")
+        m.botao(CURTO)
+        self.assertEqual(m.texto(), "RECALIBRAR: VOZ")
+
+
+class FakeSensorVoz:
+    """Faz o papel do sensor-voz/main.py: chama o ao_progredir como o real."""
+    def __init__(self, erro=None):
+        self.erro = erro
+        self.chamadas = []
+
+    def calibrar_baseline(self, esperar_enter=True, ao_progredir=None):
+        self.chamadas.append(esperar_enter)
+        for i in (1, 2):
+            ao_progredir("gravando", i, 2)
+            ao_progredir("analisando", i, 2)
+        if self.erro:
+            raise self.erro
+
+
+class TesteRecalibradorVoz(unittest.TestCase):
+    def _rodar(self, sensor=None, carregar=None):
+        mensagens = []
+        r = RecalibradorVoz(carregar=carregar or (lambda: sensor), preparo_s=0, final_s=0,
+                            dormir=lambda s: mensagens.append(r.mensagem))
+        with contextlib.redirect_stderr(io.StringIO()):   # esconde os tracebacks esperados
+            t = r.iniciar()
+            t.join(timeout=5)
+        return r, mensagens
+
+    def test_sequencia_de_mensagens_padrao(self):
+        sensor = FakeSensorVoz()
+        r, vistas = self._rodar(sensor)
+        self.assertEqual(vistas, ["VOZ 1/2: PREPARE-SE", "VOZ 2/2: PREPARE-SE", "VOZ CALIBRADA"])
+        self.assertEqual(sensor.chamadas, [False])      # sem esperar ENTER (não há teclado)
+        self.assertFalse(r.ocupado)
+        self.assertIsNone(r.mensagem)
+
+    def test_falha_mostra_mensagem_e_libera(self):
+        r, vistas = self._rodar(FakeSensorVoz(erro=RuntimeError("sem voz")))
+        self.assertEqual(vistas[-1], "VOZ FALHOU")
+        self.assertFalse(r.ocupado)
+
+    def test_sem_biblioteca_ou_praat(self):
+        for erro in (ImportError("sounddevice"), FileNotFoundError("praat"), OSError("PortAudio library not found")):
+            r, vistas = self._rodar(FakeSensorVoz(erro=erro))
+            self.assertEqual(vistas[-1], "SEM MIC/PRAAT")
+        def carregar():
+            raise ImportError("sounddevice")
+        r, vistas = self._rodar(carregar=carregar)
+        self.assertEqual(vistas[-1], "SEM MIC/PRAAT")
+
+    def test_segundo_pedido_enquanto_roda_e_ignorado(self):
+        liberar = threading.Event()
+        class Lento:
+            def calibrar_baseline(self, esperar_enter=True, ao_progredir=None):
+                liberar.wait(5)
+        r = RecalibradorVoz(carregar=lambda: Lento(), preparo_s=0, final_s=0, dormir=lambda s: None)
+        t = r.iniciar()
+        self.assertTrue(r.ocupado)
+        self.assertIsNone(r.iniciar())
+        liberar.set()
+        t.join(timeout=5)
+        self.assertFalse(r.ocupado)
+
+
 class TesteClassificacao(unittest.TestCase):
     def test_limites(self):
         self.assertEqual(classificar(0.1), CURTO)
@@ -226,6 +363,15 @@ class TesteTela(unittest.TestCase):
             self.assertEqual(img.size, (128, 64))
             self.assertEqual(img.mode, "1")
             self.assertGreater(len(set(img.tobytes())), 1)                          # não é tela em branco
+
+    def test_textos_do_b1_e_da_voz_cabem_na_tela(self):
+        from PIL import ImageFont
+        fonte = self.display._fonte(9)
+        textos = ["RECALIBRAR: POSTURA", "SOLTE: RECAL POSTURA", "RECALIBRAR: VOZ", "SOLTE: RECAL VOZ",
+                  "VOZ 1/2: PREPARE-SE", "VOZ 1/2: FALE AAAA", "VOZ 2/2: ANALISANDO",
+                  "VOZ CALIBRADA", "VOZ FALHOU", "SEM MIC/PRAAT", "VOZ: INICIANDO"]
+        for t in textos:
+            self.assertLessEqual(fonte.getlength(t), 128, t)
 
     def test_piscar_inverte_a_imagem(self):
         p = novo()

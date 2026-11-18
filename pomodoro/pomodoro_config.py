@@ -17,11 +17,12 @@ PRESETS = [
 CICLOS_ATE_PAUSA_LONGA = 4   # a cada N focos concluídos, a pausa é a longa
 
 # --- Botões (GPIO no numeração BCM; ligação: pino do GPIO ↔ GND, sem resistor) ---
-GPIO_B1 = 17   # pino 11 (GND no pino 9)  → recalibrar postura
+GPIO_B1 = 17   # pino 11 (GND no pino 9)  → recalibrar (postura ou voz)
 GPIO_B2 = 27   # pino 13 (GND no pino 14) → pomodoro
 DEBOUNCE_S = 0.05
 
-# Classificação do aperto do B2, medida ao SOLTAR o botão
+# Classificação do aperto (B1 e B2), medida ao SOLTAR o botão.
+# No B1 só importa curto × longo; "muito longo" conta como longo.
 LIMITE_LONGO_S = 1.0         # até aqui = curto; daqui até o próximo limite = longo
 LIMITE_MUITO_LONGO_S = 3.0   # a partir daqui = muito longo
 
@@ -36,3 +37,12 @@ PISCAR_MUDANCA_FASE_S = 3.0  # tela pisca (invertida) quando troca de fase: não
 CAMINHO_SOCKET_POSTURA = f"/tmp/postura-{os.getuid()}.sock"
 INTERVALO_CONSULTA_POSTURA_S = 1.0
 TIMEOUT_POSTURA_S = 1.5
+
+# --- B1: menu de recalibração (postura/voz) ---
+MENU_B1_TIMEOUT_S = 5.0      # sem clique por esse tempo, o menu fecha sozinho
+
+# --- Recalibração da voz pelo B1 (reaproveita o sensor-voz/main.py) ---
+CAMINHO_SENSOR_VOZ = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "..", "sensor-voz", "main.py")
+PREPARO_VOZ_S = 2.0          # "PREPARE-SE" antes de cada gravação de 3 s
+MENSAGEM_FINAL_VOZ_S = 3.0   # quanto tempo "VOZ CALIBRADA/FALHOU" fica na tela

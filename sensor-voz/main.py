@@ -52,9 +52,14 @@ _praat_local = os.path.join(DIRETORIO_ATUAL, "praat")
 PRAAT_EXECUTAVEL = _praat_local if (_eh_arm and os.path.isfile(_praat_local)) else "praat"
 
 
-def gravar_audio(rotulo):
-    """Grava DURACAO segundos de áudio e salva em ARQUIVO_AUDIO."""
-    input(f"Pressione ENTER e faça 'AAAAA' de forma firme e constante ({rotulo})...")
+def gravar_audio(rotulo, esperar_enter=True):
+    """
+    Grava DURACAO segundos de áudio e salva em ARQUIVO_AUDIO.
+    esperar_enter=False: grava na hora (usado pelo botão B1 do pomodoro, que não
+    tem teclado; quem chama é que avisa o usuário na tela).
+    """
+    if esperar_enter:
+        input(f"Pressione ENTER e faça 'AAAAA' de forma firme e constante ({rotulo})...")
     print(f"\n🎙️ GRAVANDO ({DURACAO}s)...")
     audio_data = sd.rec(int(DURACAO * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=CANAIS, dtype='int16')
     sd.wait()
@@ -129,12 +134,16 @@ def salvar_baseline(dados):
         json.dump(dados, f, indent=2, ensure_ascii=False)
 
 
-def calibrar_baseline():
+def calibrar_baseline(esperar_enter=True, ao_progredir=None):
     """
     Grava REPETICOES_CALIBRACAO amostras e usa a MÉDIA como baseline
     pessoal. Isso deve ser feito num momento de referência (ex: início do
     expediente, sem fadiga/estresse), não durante o teste que se quer
     avaliar.
+
+    esperar_enter=False e ao_progredir(etapa, i, n) existem pro botão B1 do
+    pomodoro: etapa é "gravando" (chamada ANTES de gravar; pode bloquear pra dar
+    tempo de o usuário se preparar) ou "analisando"; i e n = amostra atual e total.
     """
     print("\n=== CALIBRAÇÃO DE BASELINE PESSOAL ===")
     print(
@@ -146,7 +155,11 @@ def calibrar_baseline():
 
     amostras = []
     for i in range(REPETICOES_CALIBRACAO):
-        gravar_audio(f"calibração {i + 1}/{REPETICOES_CALIBRACAO}")
+        if ao_progredir:
+            ao_progredir("gravando", i + 1, REPETICOES_CALIBRACAO)
+        gravar_audio(f"calibração {i + 1}/{REPETICOES_CALIBRACAO}", esperar_enter=esperar_enter)
+        if ao_progredir:
+            ao_progredir("analisando", i + 1, REPETICOES_CALIBRACAO)
         amostras.append(rodar_praat())
 
     baseline = {
@@ -165,65 +178,70 @@ def calibrar_baseline():
     return baseline
 
 
-print("\n=== TESTE RECALIBRADO DE FADIGA VOCAL ===")
+def main():
+    print("\n=== TESTE RECALIBRADO DE FADIGA VOCAL ===")
 
-try:
-    recalibrar = "--calibrar" in sys.argv
-    baseline = None if recalibrar else carregar_baseline()
+    try:
+        recalibrar = "--calibrar" in sys.argv
+        baseline = None if recalibrar else carregar_baseline()
 
-    if baseline is None:
-        baseline = calibrar_baseline()
-        print(
-            "\nRode o programa novamente mais tarde (ex: fim do "
-            "expediente) para comparar seu estado atual com essa baseline."
-        )
-
-    else:
-        print(
-            f"Baseline carregada (jitter={baseline['jitter']:.2f}%, "
-            f"shimmer={baseline['shimmer']:.2f}%). Rode com --calibrar "
-            "para refazer a baseline."
-        )
-
-        gravar_audio("teste")
-        medicao = rodar_praat()
-
-        # Variação relativa em relação à PRÓPRIA baseline, não a um
-        # limiar fixo de população.
-        delta_jitter = (medicao["jitter"] - baseline["jitter"]) / baseline["jitter"]
-        delta_shimmer = (medicao["shimmer"] - baseline["shimmer"]) / baseline["shimmer"]
-
-        jitter_alto = delta_jitter > LIMIAR_AUMENTO_JITTER
-        shimmer_alto = delta_shimmer > LIMIAR_AUMENTO_SHIMMER
-
-        print("\n=== RESULTADOS MEDIDOS ===")
-        print(f"📊 Frequência Média (Pitch): {medicao['f0']:.1f} Hz")
-        print(f"🔹 Jitter Medido:  {medicao['jitter']:.2f}%  (baseline: {baseline['jitter']:.2f}%, variação: {delta_jitter*100:+.0f}%)")
-        print(f"🔹 Shimmer Medido: {medicao['shimmer']:.2f}%  (baseline: {baseline['shimmer']:.2f}%, variação: {delta_shimmer*100:+.0f}%)")
-        print(f"🔹 HNR Medido: {medicao['hnr']:.1f} dB")
-
-        if medicao["hnr"] < LIMIAR_HNR_MINIMO:
+        if baseline is None:
+            baseline = calibrar_baseline()
             print(
-                "\n⚠️ AVISO: HNR baixo — a gravação parece ter bastante "
-                "ruído de fundo ou o microfone estava longe. Os valores de "
-                "jitter/shimmer acima podem estar inflados por isso, não "
-                "necessariamente por fadiga vocal real."
+                "\nRode o programa novamente mais tarde (ex: fim do "
+                "expediente) para comparar seu estado atual com essa baseline."
             )
 
-        # Jitter é o sinal primário (mais consistente na literatura);
-        # shimmer sozinho não decide, só reforça a suspeita quando o
-        # jitter já está alto.
-        if jitter_alto and shimmer_alto:
-            print("\n⚠️ RESULTADO: FORTE SUSPEITA DE FADIGA VOCAL / ESTRESSE (jitter e shimmer elevados)")
-        elif jitter_alto:
-            print("\n⚠️ RESULTADO: SUSPEITA MODERADA DE FADIGA VOCAL / ESTRESSE (jitter elevado)")
         else:
-            print("\n✅ RESULTADO: VOZ ESTÁVEL (sem variação relevante em relação à baseline)")
+            print(
+                f"Baseline carregada (jitter={baseline['jitter']:.2f}%, "
+                f"shimmer={baseline['shimmer']:.2f}%). Rode com --calibrar "
+                "para refazer a baseline."
+            )
 
-except FileNotFoundError:
-    print(
-        f"\n❌ Erro: executável do Praat ('{PRAAT_EXECUTAVEL}') não encontrado. "
-        "Confira se ele está no PATH ou ajuste PRAAT_EXECUTAVEL para o caminho absoluto."
-    )
-except Exception as e:
-    print(f"\n❌ Erro: {e}")
+            gravar_audio("teste")
+            medicao = rodar_praat()
+
+            # Variação relativa em relação à PRÓPRIA baseline, não a um
+            # limiar fixo de população.
+            delta_jitter = (medicao["jitter"] - baseline["jitter"]) / baseline["jitter"]
+            delta_shimmer = (medicao["shimmer"] - baseline["shimmer"]) / baseline["shimmer"]
+
+            jitter_alto = delta_jitter > LIMIAR_AUMENTO_JITTER
+            shimmer_alto = delta_shimmer > LIMIAR_AUMENTO_SHIMMER
+
+            print("\n=== RESULTADOS MEDIDOS ===")
+            print(f"📊 Frequência Média (Pitch): {medicao['f0']:.1f} Hz")
+            print(f"🔹 Jitter Medido:  {medicao['jitter']:.2f}%  (baseline: {baseline['jitter']:.2f}%, variação: {delta_jitter*100:+.0f}%)")
+            print(f"🔹 Shimmer Medido: {medicao['shimmer']:.2f}%  (baseline: {baseline['shimmer']:.2f}%, variação: {delta_shimmer*100:+.0f}%)")
+            print(f"🔹 HNR Medido: {medicao['hnr']:.1f} dB")
+
+            if medicao["hnr"] < LIMIAR_HNR_MINIMO:
+                print(
+                    "\n⚠️ AVISO: HNR baixo — a gravação parece ter bastante "
+                    "ruído de fundo ou o microfone estava longe. Os valores de "
+                    "jitter/shimmer acima podem estar inflados por isso, não "
+                    "necessariamente por fadiga vocal real."
+                )
+
+            # Jitter é o sinal primário (mais consistente na literatura);
+            # shimmer sozinho não decide, só reforça a suspeita quando o
+            # jitter já está alto.
+            if jitter_alto and shimmer_alto:
+                print("\n⚠️ RESULTADO: FORTE SUSPEITA DE FADIGA VOCAL / ESTRESSE (jitter e shimmer elevados)")
+            elif jitter_alto:
+                print("\n⚠️ RESULTADO: SUSPEITA MODERADA DE FADIGA VOCAL / ESTRESSE (jitter elevado)")
+            else:
+                print("\n✅ RESULTADO: VOZ ESTÁVEL (sem variação relevante em relação à baseline)")
+
+    except FileNotFoundError:
+        print(
+            f"\n❌ Erro: executável do Praat ('{PRAAT_EXECUTAVEL}') não encontrado. "
+            "Confira se ele está no PATH ou ajuste PRAAT_EXECUTAVEL para o caminho absoluto."
+        )
+    except Exception as e:
+        print(f"\n❌ Erro: {e}")
+
+
+if __name__ == "__main__":
+    main()
