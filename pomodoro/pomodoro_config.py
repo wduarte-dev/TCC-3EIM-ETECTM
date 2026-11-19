@@ -1,5 +1,5 @@
 """
-Configurações do pomodoro (display OLED + 2 botões).
+Configurações do pomodoro (display OLED + 3 botões).
 
 Ajuste os valores AQUI: os outros arquivos leem deste mesmo lugar.
 """
@@ -16,15 +16,40 @@ PRESETS = [
 
 CICLOS_ATE_PAUSA_LONGA = 4   # a cada N focos concluídos, a pausa é a longa
 
-# --- Botões (GPIO no numeração BCM; ligação: pino do GPIO ↔ GND, sem resistor) ---
-GPIO_B1 = 17   # pino 11 (GND no pino 9)  → recalibrar (postura ou voz)
-GPIO_B2 = 27   # pino 13 (GND no pino 14) → pomodoro
-DEBOUNCE_S = 0.05
+# --- Botões: 3 MÓDULOS de 3 pinos (VCC, OUT, GND), BCM ---
+# VCC dos 3 no pino 17 (3,3 V) e GND dos 3 no pino 9 (ver claude/hardware.md).
+GPIO_B1 = 17   # pino 11 → recalibrar (postura ou voz)
+GPIO_B2 = 27   # pino 13 → pomodoro
+GPIO_B3 = 22   # pino 15 → desligar o Pi (aperto de 3 s; ver energia.py)
 
-# Classificação do aperto (B1 e B2), medida ao SOLTAR o botão.
+# Polaridade do OUT do módulo:
+#   "auto"  descobre sozinha lendo o nível parado por AUTO_OCIOSO_S no início
+#           (NÃO segure nenhum botão ao iniciar); funciona com módulo que sobe
+#           ou que desce ao apertar
+#   "alto"  OUT sobe ao apertar    |   "baixo"  OUT desce ao apertar
+POLARIDADE_BOTOES = "auto"
+AUTO_OCIOSO_S = 0.6
+# Resistor interno do Pi no pino do OUT. O módulo já tem o resistor dele, então o
+# padrão é nenhum (None): o pull-up interno brigava com o do módulo.
+#   None = sem resistor interno | "cima" = pull-up | "baixo" = pull-down
+PULL_INTERNO_BOTOES = None
+# Leitura por amostragem (em vez de eventos): a cada AMOSTRA_S lê o pino e só aceita
+# uma mudança de estado depois de AMOSTRAS_ESTAVEIS leituras seguidas iguais
+# (4 × 10 ms = 40 ms). Repique e picos mais curtos que isso são ignorados, tanto
+# ao apertar quanto ao soltar. Valores do projeto, ajustar com o diagnostico_botoes.py.
+AMOSTRA_S = 0.01
+AMOSTRAS_ESTAVEIS = 4
+
+# Classificação do aperto (B1, B2 e B3), medida ao SOLTAR o botão.
 # No B1 só importa curto × longo; "muito longo" conta como longo.
 LIMITE_LONGO_S = 1.0         # até aqui = curto; daqui até o próximo limite = longo
-LIMITE_MUITO_LONGO_S = 3.0   # a partir daqui = muito longo
+LIMITE_MUITO_LONGO_S = 3.0   # a partir daqui = muito longo (no B3, desliga o Pi)
+
+# --- B3: desligar o Pi ---
+# "sudo -n": não pede senha (falha na hora se precisar de uma). Como root, sem sudo.
+COMANDO_DESLIGAR = ["sudo", "-n", "poweroff"]
+B3_DICA_APOS_S = 0.5         # só mostra a dica de "segure" depois disso (toque rápido não pisca)
+MENSAGEM_FALHA_DESLIGAR_S = 3.0
 
 # --- Display OLED SSD1306 128x64 (I2C) ---
 OLED_I2C_PORTA = 1

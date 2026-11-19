@@ -17,7 +17,12 @@ from pomodoro_logica import (
     CURTO, LONGO, MUITO_LONGO,
     EV_FASE_MUDOU, EV_INICIOU, EV_PAUSOU, EV_RETOMOU, EV_REINICIOU, EV_PRESET_MUDOU,
 )
-from botoes import classificar, ClassificadorAperto
+from botoes import (
+    classificar, ClassificadorAperto, Debouncer, detectar_ocioso, EntradaBotao, BotoesTeclado,
+)
+import energia
+from energia import Desligamento, montar_comando, rodar_comando
+from diagnostico_botoes import resumir
 from recalibracao import MenuB1, POSTURA, VOZ, ACAO_RECALIBRAR
 from voz_cliente import RecalibradorVoz
 
@@ -428,6 +433,242 @@ class TestePostura(unittest.TestCase):
         servidor.close()
         self.assertEqual(recebido["pedido"], {"acao": "status"})
         self.assertEqual(resposta["estado"]["status"], "CORRETA")
+
+
+def simular(entrada, niveis, dt=0.01, relogio=None):
+    """Alimenta o EntradaBotao com uma sequência de leituras (uma a cada dt s). Devolve os eventos."""
+    eventos = []
+    for nivel in niveis:
+        relogio[0] += dt
+        tipo = entrada.amostrar(nivel)
+        if tipo:
+            eventos.append(tipo)
+    return eventos
+
+
+def nova_entrada(nivel_ocioso=False):
+    t = [0.0]
+    return EntradaBotao(nivel_ocioso, relogio=lambda: t[0]), t
+
+
+class TesteFiltroBotao(unittest.TestCase):
+    def test_debouncer_so_muda_com_leituras_seguidas(self):
+        d = Debouncer(False, n=3)
+        self.assertFalse(d.alimentar(True))
+        self.assertFalse(d.alimentar(True))
+        self.assertTrue(d.alimentar(True))             # 3ª seguida
+        self.assertTrue(d.alimentar(False))
+        self.assertTrue(d.alimentar(True))             # leitura igual ao estado zera a contagem
+        self.assertTrue(d.alimentar(False))
+        self.assertTrue(d.alimentar(False))
+        self.assertFalse(d.alimentar(False))
+
+    def test_detectar_ocioso(self):
+        self.assertEqual(detectar_ocioso([0] * 60), (False, 0.0))
+        self.assertEqual(detectar_ocioso([1] * 59 + [0]), (True, 1 / 60))
+        ocioso, minoria = detectar_ocioso([0, 1] * 30)  # linha flutuando
+        self.assertAlmostEqual(minoria, 0.5)
+        with self.assertRaises(ValueError):
+            detectar_ocioso([])
+
+    def test_clique_curto_limpo(self):
+        e, t = nova_entrada(False)
+        self.assertEqual(simular(e, [0] * 5 + [1] * 20 + [0] * 10, relogio=t), [CURTO])
+
+    def test_repique_ao_apertar_e_ao_soltar_vira_um_evento_so(self):
+        e, t = nova_entrada(False)
+        niveis = [0] * 5 + [1, 0, 1, 0, 1] + [1] * 20 + [0, 1, 0, 1, 0] + [0] * 10
+        self.assertEqual(simular(e, niveis, relogio=t), [CURTO])
+
+    def test_pico_mais_curto_que_o_filtro_e_ignorado(self):
+        e, t = nova_entrada(False)
+        self.assertEqual(simular(e, [0] * 5 + [1] * 3 + [0] * 20, relogio=t), [])
+
+    def test_clique_longo_com_falhas_no_meio_continua_um_aperto_so(self):
+        e, t = nova_entrada(False)
+        # 3,3 s apertado, com 3 quedas de 3 leituras (30 ms) no meio: antes isso quebrava o aperto
+        niveis = [0] * 5 + [1] * 50 + [0] * 3 + [1] * 100 + [0] * 3 + [1] * 150 + [0] * 10
+        self.assertEqual(simular(e, niveis, relogio=t), [MUITO_LONGO])
+
+    def test_tempos_medio_e_longo(self):
+        e, t = nova_entrada(False)
+        self.assertEqual(simular(e, [0] * 5 + [1] * 150 + [0] * 10, relogio=t), [LONGO])      # 1,5 s
+        e, t = nova_entrada(False)
+        self.assertEqual(simular(e, [0] * 5 + [1] * 320 + [0] * 10, relogio=t), [MUITO_LONGO])  # 3,2 s
+        e, t = nova_entrada(False)
+        self.assertEqual(simular(e, [0] * 5 + [1] * 60 + [0] * 10, relogio=t), [CURTO])        # 0,6 s
+
+    def test_polaridade_invertida_funciona_igual(self):
+        e, t = nova_entrada(True)       # módulo parado em alto, desce ao apertar
+        niveis = [1] * 5 + [0, 1, 0] + [0] * 150 + [1, 0, 1] + [1] * 10
+        self.assertEqual(simular(e, niveis, relogio=t), [LONGO])
+
+    def test_dois_cliques_seguidos(self):
+        e, t = nova_entrada(False)
+        niveis = [0] * 5 + [1] * 20 + [0] * 10 + [1] * 20 + [0] * 10
+        self.assertEqual(simular(e, niveis, relogio=t), [CURTO, CURTO])
+
+    def test_mostra_o_aperto_em_andamento_pra_tela(self):
+        e, t = nova_entrada(False)
+        simular(e, [0] * 5 + [1] * 150, relogio=t)
+        self.assertEqual(e.aperto.tipo_se_soltar_agora(), LONGO)
+
+
+class TesteBotoesGPIOComPinoFalso(unittest.TestCase):
+    """O caminho real do gpiozero, com pinos simulados (MockFactory). Pula se não houver gpiozero."""
+
+    def setUp(self):
+        try:
+            from gpiozero.pins.mock import MockFactory
+        except ImportError:
+            self.skipTest("gpiozero não instalado")
+        import queue
+        import botoes
+        self.fila = queue.Queue()
+        self.fab = MockFactory()
+        self.botoes = None
+        self.mod = botoes
+        self.mensagens = []
+
+    def tearDown(self):
+        if self.botoes:
+            self.botoes.fechar()
+
+    def criar(self, polaridade, pull=None):
+        self.botoes = self.mod.BotoesGPIO(self.fila, polaridade=polaridade, pull=pull,
+                                          fabrica_pinos=self.fab, log=self.mensagens.append)
+        return self.botoes
+
+    def apertar(self, gpio, segundos, alto=True):
+        import time
+        pino = self.fab.pin(gpio)
+        (pino.drive_high if alto else pino.drive_low)()
+        time.sleep(segundos)
+        (pino.drive_low if alto else pino.drive_high)()
+        time.sleep(0.15)
+
+    def eventos(self):
+        saida = []
+        while not self.fila.empty():
+            saida.append(self.fila.get_nowait())
+        return saida
+
+    def test_modulo_que_sobe_ao_apertar_sem_pull_interno(self):
+        for gpio in (17, 27, 22):
+            self.fab.pin(gpio).drive_low()
+        self.criar("alto")
+        self.apertar(17, 0.2)
+        self.apertar(22, 0.2)
+        self.assertEqual(self.eventos(), [("B1", CURTO), ("B3", CURTO)])
+
+    def test_modulo_que_desce_ao_apertar(self):
+        for gpio in (17, 27, 22):
+            self.fab.pin(gpio).drive_high()
+        self.criar("baixo")
+        self.apertar(27, 0.2, alto=False)
+        self.assertEqual(self.eventos(), [("B2", CURTO)])
+
+    def test_polaridade_auto_descobre_as_duas(self):
+        self.fab.pin(17).drive_low()      # B1 sobe ao apertar
+        self.fab.pin(27).drive_high()     # B2 desce ao apertar
+        self.fab.pin(22).drive_low()
+        b = self.criar("auto")
+        self.assertEqual(b.info["B1"]["parado_em"], "baixo")
+        self.assertEqual(b.info["B2"]["parado_em"], "alto")
+        self.apertar(17, 0.2)
+        self.apertar(27, 0.2, alto=False)
+        self.assertEqual(self.eventos(), [("B1", CURTO), ("B2", CURTO)])
+
+    def test_aperto_longo_pelo_gpio(self):
+        for gpio in (17, 27, 22):
+            self.fab.pin(gpio).drive_low()
+        self.criar("alto")
+        self.apertar(27, 1.1)
+        self.assertEqual(self.eventos(), [("B2", LONGO)])
+
+    def test_pull_interno_invalido_e_polaridade_invalida(self):
+        with self.assertRaises(ValueError):
+            self.criar("talvez")
+        with self.assertRaises(ValueError):
+            self.criar("auto", pull="meio")
+
+
+class TesteDesligamento(unittest.TestCase):
+    def test_comando_com_e_sem_root(self):
+        self.assertEqual(montar_comando(root=False), ["sudo", "-n", "poweroff"])
+        self.assertEqual(montar_comando(root=True), ["poweroff"])
+
+    def test_so_o_muito_longo_desliga(self):
+        chamadas = []
+        d = Desligamento(executar=lambda c: chamadas.append(c) or True, root=False)
+        self.assertFalse(d.botao(CURTO))
+        self.assertFalse(d.botao(LONGO))
+        self.assertEqual(chamadas, [])
+        self.assertTrue(d.botao(MUITO_LONGO))
+        self.assertEqual(chamadas, [["sudo", "-n", "poweroff"]])
+        self.assertTrue(d.em_andamento)
+
+    def test_nao_dispara_duas_vezes(self):
+        chamadas = []
+        d = Desligamento(executar=lambda c: chamadas.append(c) or True, root=False)
+        d.botao(MUITO_LONGO)
+        self.assertFalse(d.botao(MUITO_LONGO))
+        self.assertEqual(len(chamadas), 1)
+
+    def test_falha_mostra_aviso_por_3_s_e_deixa_tentar_de_novo(self):
+        t = [100.0]
+        resultados = iter([False, True])
+        d = Desligamento(executar=lambda c: next(resultados), relogio=lambda: t[0], root=False)
+        self.assertFalse(d.botao(MUITO_LONGO))
+        self.assertFalse(d.em_andamento)
+        self.assertEqual(d.texto(0), energia.TEXTO_FALHOU)
+        t[0] += 3.1
+        self.assertIsNone(d.texto(0))
+        self.assertTrue(d.botao(MUITO_LONGO))
+        self.assertEqual(d.texto(0), energia.TEXTO_DESLIGANDO)
+
+    def test_texto_enquanto_segura(self):
+        d = Desligamento(executar=lambda c: True, root=False)
+        self.assertIsNone(d.texto(0.0))
+        self.assertIsNone(d.texto(0.3))                # toque rápido não mostra nada
+        self.assertEqual(d.texto(0.5), "SEGURE 3s: DESLIGAR")
+        self.assertEqual(d.texto(1.2), "SEGURE 2s: DESLIGAR")
+        self.assertEqual(d.texto(2.9), "SEGURE 1s: DESLIGAR")
+        self.assertEqual(d.texto(3.0), energia.TEXTO_SOLTE)
+
+    def test_rodar_comando_devolve_false_em_vez_de_quebrar(self):
+        import sys
+        self.assertTrue(rodar_comando([sys.executable, "-c", "pass"]))
+        self.assertFalse(rodar_comando([sys.executable, "-c", "raise SystemExit(1)"]))
+        self.assertFalse(rodar_comando(["comando-que-nao-existe-xyz"]))
+
+    def test_teclado_tem_o_b3(self):
+        self.assertEqual(BotoesTeclado.COMANDOS["3m"], ("B3", MUITO_LONGO))
+
+    def test_textos_cabem_na_tela(self):
+        try:
+            import display
+        except ImportError:
+            self.skipTest("Pillow não instalado")
+        fonte = display._fonte(9)
+        for t in (energia.TEXTO_DESLIGANDO, energia.TEXTO_FALHOU, energia.TEXTO_SOLTE, "SEGURE 3s: DESLIGAR"):
+            self.assertLessEqual(fonte.getlength(t), 128, t)
+
+
+class TesteDiagnostico(unittest.TestCase):
+    def test_resumo_separa_ruido_parado_de_repique(self):
+        bordas = [(1.0, True), (2.0, False),                       # antes de liberar: ruído com o botão solto
+                  (6.0, True), (6.004, False), (6.009, True), (6.3, False)]
+        r = resumir(bordas, inicio_aperto_s=5.0)
+        self.assertEqual(r["bordas_com_botao_solto"], 2)
+        self.assertEqual(r["bordas_durante_apertos"], 4)
+        self.assertEqual(r["repiques"], 2)
+        self.assertEqual(r["menor_intervalo_ms"], 4.0)
+
+    def test_resumo_sem_bordas(self):
+        r = resumir([], 5.0)
+        self.assertEqual(r["repiques"], 0)
+        self.assertIsNone(r["menor_intervalo_ms"])
 
 
 if __name__ == "__main__":
