@@ -61,6 +61,13 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
+# Comando `pomodoro` (presets: adicionar/listar/remover)
+sudo tee /usr/local/bin/pomodoro >/dev/null <<EOF
+#!/usr/bin/env bash
+exec "$PY" "$DIR/pomodoro_ctl.py" "\$@"
+EOF
+sudo chmod +x /usr/local/bin/pomodoro
+
 sudo systemctl daemon-reload
 sudo systemctl enable pomodoro
 sudo systemctl restart pomodoro
@@ -69,3 +76,4 @@ echo
 echo "Pronto! O pomodoro já está rodando e vai iniciar sozinho no boot."
 echo "  sudo journalctl -u pomodoro -f   -> log ao vivo (Ctrl+C sai)"
 echo "  sudo systemctl restart pomodoro  -> reinicia"
+echo "  pomodoro listar                  -> presets (pomodoro adicionar --preset 50/10/20)"

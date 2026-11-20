@@ -73,7 +73,17 @@ _NOME_FASE = {FOCO: "FOCO", PAUSA: "PAUSA", PAUSA_LONGA: "P.LONGA"}   # P.LONGA:
 def _texto_fase(pomo):
     """Canto direito do topo: '<FASE> n/4' (a fase continua aparecendo quando pausado)."""
     nome = _NOME_FASE.get(pomo.fase_atual, "")
+    if not pomo.tem_pausa_longa:      # preset MM/MM: sem bloco de 4, sem contador
+        return nome
     return f"{nome} {pomo.ciclo_atual}/{pomo.ciclos_ate_longa}"
+
+
+def _tamanho_que_cabe(texto, tamanhos=(26, 22, 18, 16), largura=LARGURA - 2):
+    """Maior tamanho de fonte em que o texto cabe (presets como 50/10/20 não cabem em 26)."""
+    for t in tamanhos:
+        if _largura(texto, t) <= largura:
+            return t
+    return tamanhos[-1]
 
 
 def _icone_pausa(d, x, y=1):
@@ -124,7 +134,8 @@ def desenhar(pomo, texto_postura, status_postura=None, segurando_tipo=None, pisc
 
     if pomo.estado == SELECAO:
         _texto(d, (LARGURA // 2, 0), "TEMPO", 9, ancora="ma")
-        _texto(d, (LARGURA // 2, 26), pomo.preset["nome"], 26, ancora="mm")
+        nome = pomo.preset["nome"]
+        _texto(d, (LARGURA // 2, 26), nome, _tamanho_que_cabe(nome), ancora="mm")
         if dica:      # sem dica fixa de "curto/longo" (19/11): só o aviso de quando soltar
             _texto(d, (LARGURA // 2, 41), f"SOLTE: {dica}", 9, ancora="ma")
     else:

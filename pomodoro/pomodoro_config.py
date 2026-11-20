@@ -5,14 +5,16 @@ Ajuste os valores AQUI: os outros arquivos leem deste mesmo lugar.
 """
 import os
 
-# --- Presets (nome, foco, pausa, pausa longa), tudo em MINUTOS ---
-# 25/5 é o padrão da técnica Pomodoro. 50/10 e 90/20 são variações populares;
-# os tempos da pausa longa são escolha do projeto (sem validação própria).
-PRESETS = [
-    {"nome": "25/5",  "foco": 25, "pausa": 5,  "pausa_longa": 15},
-    {"nome": "50/10", "foco": 50, "pausa": 10, "pausa_longa": 20},
-    {"nome": "90/20", "foco": 90, "pausa": 20, "pausa_longa": 30},
-]
+# --- Presets (T6), tudo em MINUTOS ---
+# Um só vem de fábrica: 25/5 com pausa longa de 15. O 25/5 é o padrão da técnica
+# Pomodoro; os 15 min da pausa longa são escolha do projeto (sem validação própria).
+# O usuário adiciona os dele com o comando `pomodoro adicionar --preset MM/MM[/MM]`
+# (ver presets.py); ficam num JSON fora do repositório.
+PRESET_PADRAO = {"nome": "25/5", "foco": 25, "pausa": 5, "pausa_longa": 15}
+PRESETS = [PRESET_PADRAO]      # só o de fábrica (o main.py junta os do usuário)
+CAMINHO_PRESETS = os.environ.get("POMODORO_PRESETS") or os.path.join(
+    os.path.expanduser("~"), ".config", "pomodoro", "presets.json")
+MINUTOS_MIN, MINUTOS_MAX = 1, 180   # faixa aceita no comando (escolha do projeto, sem fonte)
 
 CICLOS_ATE_PAUSA_LONGA = 4   # a cada N focos concluídos, a pausa é a longa
 

@@ -25,7 +25,8 @@ from pomodoro_config import (
     ATUALIZACAO_TELA_S, PISCAR_MUDANCA_FASE_S, CAMINHO_BASELINE_VOZ,
     POLARIDADE_BOTOES, PULL_INTERNO_BOTOES,
 )
-from pomodoro_logica import Pomodoro, EV_FASE_MUDOU, LONGO, MUITO_LONGO
+from pomodoro_logica import Pomodoro, EV_FASE_MUDOU, LONGO, MUITO_LONGO, SELECAO
+import presets
 from recalibracao import MenuB1, ACAO_RECALIBRAR, POSTURA, VOZ
 from postura_cliente import MonitorPostura, texto_curto, pontos_enquadramento
 from voz_cliente import RecalibradorVoz, VozSimulada
@@ -64,7 +65,8 @@ def main():
         botoes = BotoesTeclado(fila)
 
     monitor = MonitorPostura()
-    pomo = Pomodoro()
+    pomo = Pomodoro(presets=presets.todos())
+    assinatura_presets = presets.assinatura()
     menu = MenuB1()
     if args.botoes == "teclado":
         # no notebook o "3m" NUNCA desliga a máquina de verdade: só mostra o comando
@@ -114,6 +116,10 @@ def main():
             elif origem == "B2":
                 eventos += pomo.botao(tipo)
         eventos += pomo.tick(dt)
+        # `pomodoro adicionar/remover` mexeu no arquivo: recarrega na tela de escolha
+        if pomo.estado == SELECAO and presets.assinatura() != assinatura_presets:
+            assinatura_presets = presets.assinatura()
+            pomo.trocar_presets(presets.todos())
         menu.ocupado = voz.ocupado
         menu.tick(dt_real)
 

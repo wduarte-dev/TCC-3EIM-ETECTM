@@ -42,7 +42,7 @@ EV_PRESET_MUDOU = "PRESET_MUDOU"
 
 class Pomodoro:
     def __init__(self, presets=None, ciclos_ate_longa=CICLOS_ATE_PAUSA_LONGA):
-        self.presets = presets or PRESETS
+        self.presets = list(presets or PRESETS)
         self.ciclos_ate_longa = ciclos_ate_longa
         self.indice_preset = 0
         self.estado = SELECAO
@@ -54,6 +54,21 @@ class Pomodoro:
     @property
     def preset(self):
         return self.presets[self.indice_preset]
+
+    @property
+    def tem_pausa_longa(self):
+        return self.preset.get("pausa_longa") is not None
+
+    def trocar_presets(self, presets):
+        """Lista nova (o usuário mexeu no presets.json). Só vale na SELECAO; tenta manter
+        o preset escolhido pelo nome, senão volta pro 1º. Devolve True se trocou."""
+        if self.estado != SELECAO or not presets:
+            return False
+        nome = self.preset["nome"]
+        self.presets = list(presets)
+        nomes = [p["nome"] for p in self.presets]
+        self.indice_preset = nomes.index(nome) if nome in nomes else 0
+        return True
 
     @property
     def rodando(self):
@@ -140,7 +155,7 @@ class Pomodoro:
         """Fase depois da atual. Foco e pausa se encadeiam sozinhos."""
         if self.estado == FOCO:
             self.focos_concluidos += 1
-            if self.focos_concluidos % self.ciclos_ate_longa == 0:
+            if self.tem_pausa_longa and self.focos_concluidos % self.ciclos_ate_longa == 0:
                 return PAUSA_LONGA
             return PAUSA
         return FOCO

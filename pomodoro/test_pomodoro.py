@@ -166,6 +166,116 @@ class TestePausaEReinicio(unittest.TestCase):
         self.assertEqual(p.rotulo_aperto(LONGO), "VOLTAR")
 
 
+class TestePresets(unittest.TestCase):
+    """T6: um pré-configurado + presets do usuário num JSON."""
+
+    def setUp(self):
+        import presets
+        self.presets = presets
+        self.pasta = tempfile.mkdtemp()
+        self.arq = os.path.join(self.pasta, "sub", "presets.json")
+
+    def test_de_fabrica_so_o_25_5_com_pausa_longa_15(self):
+        from pomodoro_config import PRESETS
+        self.assertEqual(PRESETS, [{"nome": "25/5", "foco": 25, "pausa": 5, "pausa_longa": 15}])
+        self.assertEqual(self.presets.todos(self.arq), PRESETS)       # sem arquivo
+
+    def test_interpretar(self):
+        f = self.presets.interpretar
+        self.assertEqual(f("50/10"), {"nome": "50/10", "foco": 50, "pausa": 10, "pausa_longa": None})
+        self.assertEqual(f(" 50/10/20 "), {"nome": "50/10/20", "foco": 50, "pausa": 10, "pausa_longa": 20})
+        for ruim in ("50", "50/10/20/5", "50/x", "0/5", "181/5", "50/-1", "50/10/5", "5.5/1", ""):
+            with self.assertRaises(self.presets.PresetInvalido, msg=ruim):
+                f(ruim)
+        self.assertEqual(f("180/180/180")["foco"], 180)
+        self.assertEqual(f("50/10/10")["pausa_longa"], 10)            # 3º igual à pausa vale
+
+    def test_adicionar_listar_remover(self):
+        self.presets.adicionar("50/10/20", self.arq)
+        self.presets.adicionar("90/20", self.arq)
+        nomes = [p["nome"] for p in self.presets.todos(self.arq)]
+        self.assertEqual(nomes, ["25/5", "50/10/20", "90/20"])
+        self.presets.remover("50/10/20", self.arq)
+        self.assertEqual([p["nome"] for p in self.presets.todos(self.arq)], ["25/5", "90/20"])
+
+    def test_duplicata_e_padrao_sao_recusados_sem_gravar(self):
+        self.presets.adicionar("50/10", self.arq)
+        antes = open(self.arq, encoding="utf-8").read()
+        for texto in ("50/10", "25/5", "25/5/15"):
+            with self.assertRaises(self.presets.PresetInvalido, msg=texto):
+                self.presets.adicionar(texto, self.arq)
+        with self.assertRaises(self.presets.PresetInvalido):
+            self.presets.adicionar("50/10/5", self.arq)                # 3º < pausa
+        self.assertEqual(open(self.arq, encoding="utf-8").read(), antes)
+
+    def test_padrao_nao_e_removivel_e_inexistente_avisa(self):
+        for texto in ("25/5", "25/5/15", "40/10"):
+            with self.assertRaises(self.presets.PresetInvalido, msg=texto):
+                self.presets.remover(texto, self.arq)
+
+    def test_arquivo_estragado_nao_derruba(self):
+        os.makedirs(os.path.dirname(self.arq))
+        with open(self.arq, "w", encoding="utf-8") as f:
+            f.write('{"presets": ["50/10", "lixo", "0/5", "50/10"]}')
+        self.assertEqual([p["nome"] for p in self.presets.todos(self.arq)], ["25/5", "50/10"])
+        with open(self.arq, "w", encoding="utf-8") as f:
+            f.write("isso não é json")
+        self.assertEqual(len(self.presets.todos(self.arq)), 1)
+
+    def test_sem_pausa_longa_alterna_foco_e_pausa(self):
+        p = Pomodoro(presets=[{"nome": "2/1", "foco": 2, "pausa": 1, "pausa_longa": None}])
+        p.botao(LONGO)
+        fases = []
+        for _ in range(10):
+            p.tick(60)
+            fases.append(p.estado)
+        self.assertNotIn(PAUSA_LONGA, fases)
+        self.assertIn(PAUSA, fases)
+
+    def test_trocar_presets_so_na_selecao_e_mantem_o_escolhido(self):
+        a = {"nome": "A", "foco": 2, "pausa": 1, "pausa_longa": 3}
+        b = {"nome": "B", "foco": 5, "pausa": 1, "pausa_longa": None}
+        p = Pomodoro(presets=[a, b])
+        p.botao(CURTO)                                   # B
+        self.assertTrue(p.trocar_presets([a, {"nome": "C", "foco": 1, "pausa": 1, "pausa_longa": None}, b]))
+        self.assertEqual(p.preset["nome"], "B")
+        self.assertTrue(p.trocar_presets([a]))          # B sumiu: volta pro 1º
+        self.assertEqual(p.preset["nome"], "A")
+        p.botao(LONGO)
+        self.assertFalse(p.trocar_presets([b]))         # rodando: não troca
+
+    def test_comando(self):
+        import pomodoro_ctl
+        os.environ["POMODORO_PRESETS"] = self.arq
+        try:
+            import presets as mod
+            from unittest import mock
+            with mock.patch.object(mod, "CAMINHO_PRESETS", self.arq), \
+                    mock.patch.object(mod.adicionar, "__defaults__", (self.arq,)), \
+                    mock.patch.object(mod.remover, "__defaults__", (self.arq,)), \
+                    mock.patch.object(mod.todos, "__defaults__", (self.arq,)):
+                saida = io.StringIO()
+                with contextlib.redirect_stdout(saida):
+                    pomodoro_ctl.main(["adicionar", "--preset", "50/10/20"])
+                    pomodoro_ctl.main(["listar"])
+                self.assertIn("50/10/20", saida.getvalue())
+                with self.assertRaises(SystemExit) as erro, contextlib.redirect_stderr(io.StringIO()):
+                    pomodoro_ctl.main(["adicionar", "--preset", "25/5"])
+                self.assertIn("Nada foi gravado", str(erro.exception))
+        finally:
+            del os.environ["POMODORO_PRESETS"]
+
+    def test_nome_longo_cabe_na_selecao(self):
+        try:
+            import display
+        except ImportError:
+            self.skipTest("Pillow não instalado")
+        for nome in ("25/5", "50/10/20", "180/180/180"):
+            t = display._tamanho_que_cabe(nome)
+            self.assertLessEqual(display._largura(nome, t), 126, nome)
+        self.assertEqual(display._tamanho_que_cabe("25/5"), 26)
+
+
 class TesteMenuB1(unittest.TestCase):
     def test_curto_abre_em_postura_e_alterna_com_voz(self):
         m = MenuB1(timeout_s=5)
