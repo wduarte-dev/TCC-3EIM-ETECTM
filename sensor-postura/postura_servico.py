@@ -55,11 +55,12 @@ from postura_config import (
 )
 from postura_logica import (
     AvaliadorPostura, metricas, calcular_baseline, pontos_visiveis, descrever_falta, PONTOS,
+    calcular_razao_cb,
     CORRETA, ATENCAO, ALERTA,
 )
 
 # Índices das articulações no MoveNet (COCO format)
-ORELHA_ESQ = 3
+ORELHA_ESQ, ORELHA_DIR = 3, 4
 OMBRO_ESQ, OMBRO_DIR = 5, 6
 
 NOME_JANELA = "Monitoramento de Postura - TCC"
@@ -144,6 +145,9 @@ class DetectorPostura:
         # confiança dos 3 pontos no último quadro (orelha, ombro do lado da orelha, outro
         # ombro), mesmo quando o quadro não vale: é o que a tela de enquadramento mostra
         self.ultimas_confiancas = (0.0, 0.0, 0.0)
+        # T4: c/b (orelha-orelha ÷ ombros) do último quadro válido, só pro CSV; None se a
+        # outra orelha não apareceu
+        self.ultima_razao_cb = None
 
     def detectar_metricas_postura(self, frame, limiar_confianca):
         """
@@ -165,6 +169,7 @@ class DetectorPostura:
         ombro_dir_y, ombro_dir_x, conf_ombro_dir = keypoints[OMBRO_DIR]
         self.ultimas_confiancas = (float(conf_orelha), float(conf_ombro_esq), float(conf_ombro_dir))
 
+        self.ultima_razao_cb = None
         if (conf_orelha <= limiar_confianca or conf_ombro_esq <= limiar_confianca
                 or conf_ombro_dir <= limiar_confianca):
             return None, None, None
@@ -174,6 +179,11 @@ class DetectorPostura:
         x_ombro_dir, y_ombro_dir = desnormalizar_keypoint(ombro_dir_x, ombro_dir_y, tamanho, escala, offset_x, offset_y)
 
         pontos = (x_orelha, y_orelha, x_ombro_esq, y_ombro_esq, x_ombro_dir, y_ombro_dir)
+        orelha_d_y, orelha_d_x, conf_orelha_d = keypoints[ORELHA_DIR]
+        if conf_orelha_d > limiar_confianca:
+            x_orelha_d, y_orelha_d = desnormalizar_keypoint(orelha_d_x, orelha_d_y, tamanho, escala, offset_x, offset_y)
+            self.ultima_razao_cb = calcular_razao_cb(x_orelha, y_orelha, x_orelha_d, y_orelha_d,
+                                                     x_ombro_esq, y_ombro_esq, x_ombro_dir, y_ombro_dir)
         angulo_bruto, razao_pescoco = metricas(pontos)
         if angulo_bruto is None:   # ombros coincidentes: sem escala, conta como sem detecção
             return None, None, None
@@ -220,6 +230,8 @@ class LogCSV:
         "data_hora", "fonte", "video", "status",
         "angulo", "razao_pescoco", "desvio_angulo", "queda_razao_pct",
         "baseline_angulo", "baseline_razao", "fps",
+        # T3/T4: decisão mostrada, estado do contador e c/b (só armazenada)
+        "status_exibido", "contador", "perdidos_seguidos", "ruins_medidos", "razao_cb",
     ]
 
     def __init__(self, pasta):
@@ -236,12 +248,24 @@ class LogCSV:
             return
         self.fechar()
         caminho = os.path.join(self.pasta, f"postura_{hoje}.csv")
+        versao = 2
+        while os.path.exists(caminho) and not self._mesmo_cabecalho(caminho):
+            # arquivo do dia com colunas antigas: começa outro em vez de misturar formatos
+            caminho = os.path.join(self.pasta, f"postura_{hoje}_v{versao}.csv")
+            versao += 1
         novo = not os.path.exists(caminho)
         self.arquivo = open(caminho, "a", newline="", encoding="utf-8")
         self.escritor = csv.writer(self.arquivo)
         if novo:
             self.escritor.writerow(self.CABECALHO)
         self.data_atual = hoje
+
+    def _mesmo_cabecalho(self, caminho):
+        try:
+            with open(caminho, encoding="utf-8") as f:
+                return f.readline().strip() == ",".join(self.CABECALHO)
+        except OSError:
+            return False
 
     def registrar(self, **campos):
         try:
@@ -829,13 +853,16 @@ class MonitorPostura:
 
             # Decisão (lógica pura, ver postura_logica.py)
             resultado = avaliador.avaliar(pontos)
-            status = resultado.status
+            status = resultado.status_exibido      # tela/socket: a decisão (T3)
             angulo, razao = resultado.angulo, resultado.razao
             desvio_angulo, queda_razao = resultado.desvio_angulo, resultado.queda_razao
             if status == "SEM_USUARIO":
                 status_texto, cor_alerta = "Procurando usuario...", (255, 255, 255)
             else:
-                medidas = f"(ang {int(desvio_angulo)}° / queda {queda_razao * 100:.0f}%)"
+                if desvio_angulo is None:   # perda tolerada no meio de uma sequência ruim
+                    medidas = "(sem pontos neste quadro)"
+                else:
+                    medidas = f"(ang {int(desvio_angulo)}° / queda {queda_razao * 100:.0f}%)"
                 status_texto, cor_alerta = {
                     ALERTA: (f"ALERTA: POSTURA INCORRETA {medidas}", (0, 0, 255)),
                     ATENCAO: (f"ATENCAO... {medidas}", (0, 255, 255)),
@@ -854,11 +881,15 @@ class MonitorPostura:
                 fonte, video = self.estado["fonte"], self.estado["video"]
             self.log.registrar(
                 data_hora=datetime.now().isoformat(timespec="milliseconds"),
-                fonte=fonte, video=video or "", status=status,
+                fonte=fonte, video=video or "",
+                status=resultado.status,             # o que o quadro mostrou (SEM_USUARIO honesto)
                 angulo=angulo, razao_pescoco=razao,
                 desvio_angulo=desvio_angulo, queda_razao_pct=queda_pct,
                 baseline_angulo=baseline_angulo, baseline_razao=baseline_razao,
                 fps=fps,
+                status_exibido=status, contador=avaliador.contador,
+                perdidos_seguidos=avaliador.perdidos, ruins_medidos=avaliador.medidos,
+                razao_cb=self.detector.ultima_razao_cb if pontos is not None else None,
             )
 
             self._mostrar_preview(frame, [(status_texto, cor_alerta)])

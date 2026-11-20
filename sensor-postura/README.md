@@ -35,8 +35,17 @@ pelo comando `postura`.
      cabeça caindo pra frente/baixo. Dividir pelos ombros cancela a distância da
      câmera. Alerta se a razão **cair** mais de **12%** em relação à baseline. Aumentar
      a razão não gera alerta.
-4. **Média móvel** de 5 leituras (tira a tremedeira) + **contador**: só vira
-   ALERTA depois de 15 frames seguidos de postura ruim.
+4. **Média móvel** de 5 leituras (tira a tremedeira) + **contador**: cada quadro ruim
+   soma 1, cada quadro correto desconta 1, e vira ALERTA quando o contador passa de 15.
+   **Perder os pontos também é informação (T3):** se o MoveNet perde a pessoa no meio de
+   uma sequência ruim (`RUIM → SEM → RUIM → SEM`), é provável que ela esteja encurvada no
+   limite do que a câmera capta. Até `PERDAS_TOLERADAS` (5) perdas **seguidas** contam como
+   indício (o contador sobe e a tela continua em ATENÇÃO/ALERTA); passou disso, conclui que a
+   pessoa saiu do enquadramento, zera e mostra `SEM_USUARIO`. Uma perda sem sequência ruim
+   antes não inicia nada. **Trava:** o ALERTA exige pelo menos `MINIMO_RUINS_MEDIDOS` (8)
+   quadros ruins **medidos**, pra não sair majoritariamente de quadros perdidos. É
+   **inferência por regras (máquina de estados), não IA**. Os valores 5 e 8 são
+   **provisórios**, escolha do projeto, a definir com os dados do estudo.
 5. **Enquadramento (quais pontos a câmera vê):** na contagem da calibração o MoveNet já roda,
    e o status (`pontos_visiveis`) diz se a orelha, o ombro do lado dela e o outro ombro estão
    visíveis (confiança > 0,4). O pomodoro desenha isso no OLED como 3 pontos (cheio/vazado), e o
@@ -167,9 +176,16 @@ Também dá pra rodar manual: `python postura_servico.py --video nome.mp4`
 
 `logs/postura_AAAA-MM-DD.csv`, uma linha por frame analisado:
 
-`data_hora, fonte, video, status, angulo, razao_pescoco, desvio_angulo, queda_razao_pct, baseline_angulo, baseline_razao, fps`
+`data_hora, fonte, video, status, angulo, razao_pescoco, desvio_angulo, queda_razao_pct, baseline_angulo, baseline_razao, fps, status_exibido, contador, perdidos_seguidos, ruins_medidos, razao_cb`
 
-O `status` pode ser `CALIBRADO`, `CORRETA`, `ATENCAO`, `ALERTA` ou `SEM_USUARIO`.
+- `status`: o que **o quadro** mostrou: `CALIBRADO`, `CORRETA`, `ATENCAO`, `ALERTA` ou `SEM_USUARIO`
+  (quadro sem os 3 pontos fica `SEM_USUARIO` mesmo quando conta como indício: dado honesto).
+- `status_exibido`: a decisão que foi pra tela (numa perda tolerada, continua `ATENCAO`/`ALERTA`).
+- `contador`, `perdidos_seguidos`, `ruins_medidos`: estado do contador de alerta (servem pra ajustar N e M).
+- `razao_cb` (T4): distância orelha-orelha ÷ largura dos ombros. **Só armazenada**, não decide
+  nada; vazia se a outra orelha não apareceu.
+- Se o arquivo do dia já existia com as colunas antigas, o serviço começa `postura_AAAA-MM-DD_v2.csv`
+  em vez de misturar formatos.
 
 ## Display (próximo passo)
 
