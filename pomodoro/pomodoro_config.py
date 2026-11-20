@@ -48,7 +48,8 @@ LIMITE_MUITO_LONGO_S = 3.0   # a partir daqui = muito longo (no B3, desliga o Pi
 # --- B3: desligar o Pi ---
 # "sudo -n": não pede senha (falha na hora se precisar de uma). Como root, sem sudo.
 COMANDO_DESLIGAR = ["sudo", "-n", "poweroff"]
-B3_DICA_APOS_S = 0.5         # só mostra a dica de "segure" depois disso (toque rápido não pisca)
+B3_DICA_APOS_S = 0.5         # segurando: a contagem "SEGURE Ns" aparece depois disso
+B3_DICA_CLIQUE_S = 2.0       # clique curto no B3: mostra "SEGURE 3s: DESLIGAR" por esse tempo
 MENSAGEM_FALHA_DESLIGAR_S = 3.0
 
 # --- Display OLED SSD1306 128x64 (I2C) ---

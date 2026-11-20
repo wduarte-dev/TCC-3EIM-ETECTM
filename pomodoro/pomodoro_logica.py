@@ -10,11 +10,12 @@ Estados:
     PAUSA_LONGA  contagem regressiva do descanso longo
     PAUSADO      timer congelado (guarda a fase que estava rodando)
 
-Botão (tipo do aperto, ver botoes.py):
-    SELECAO : curto → próximo preset | longo → inicia o foco | muito longo → nada
-    rodando : longo → pausa          | muito longo → reinicia (volta pra SELECAO)
-    PAUSADO : longo → retoma         | muito longo → reinicia
-    (curto não faz nada fora da SELECAO, pra um toque sem querer não atrapalhar)
+Botão B2 (tipo do aperto, ver botoes.py). "Muito longo" vale como longo no B2:
+    SELECAO : curto → próximo preset | longo → inicia o foco
+    rodando : curto → pausa          | longo → volta pra SELECAO (zera o bloco)
+    PAUSADO : curto → retoma         | longo → volta pra SELECAO
+    (troca de 19/11: antes o curto era ignorado fora da SELECAO; agora um toque sem
+    querer pausa o timer, em troca de pausar com um clique só)
 """
 from pomodoro_config import PRESETS, CICLOS_ATE_PAUSA_LONGA
 
@@ -87,32 +88,29 @@ class Pomodoro:
         O que vai acontecer se o B2 for solto agora com esse tipo de aperto
         (a tela mostra enquanto o botão está segurado). "" = nada.
         """
-        if tipo == LONGO:
-            if self.estado == SELECAO:
-                return "INICIAR"
-            return "RETOMAR" if self.estado == PAUSADO else "PAUSAR"
-        if tipo == MUITO_LONGO and self.estado != SELECAO:
-            return "REINICIAR"
+        if tipo in (LONGO, MUITO_LONGO):
+            return "INICIAR" if self.estado == SELECAO else "VOLTAR"
         return ""
 
     # ---------- entrada ----------
     def botao(self, tipo):
         """Trata um aperto do B2. Devolve a lista de eventos."""
+        longo = tipo in (LONGO, MUITO_LONGO)
         if self.estado == SELECAO:
             if tipo == CURTO:
                 self.indice_preset = (self.indice_preset + 1) % len(self.presets)
                 return [EV_PRESET_MUDOU]
-            if tipo == LONGO:
+            if longo:
                 self.focos_concluidos = 0
                 self._entrar(FOCO)
                 return [EV_INICIOU]
             return []
 
-        if tipo == MUITO_LONGO:
+        if longo:
             self._reiniciar()
             return [EV_REINICIOU]
 
-        if tipo == LONGO:
+        if tipo == CURTO:
             if self.rodando:
                 self._fase_antes_da_pausa = self.estado
                 self.estado = PAUSADO
@@ -152,7 +150,7 @@ class Pomodoro:
         self.restante_s = self.duracao_fase_s(fase)
 
     def _reiniciar(self):
-        """Muito longo: volta pra seleção de presets e zera o bloco."""
+        """Longo fora da seleção: volta pra seleção de presets e zera o bloco."""
         self._fase_antes_da_pausa = None
         self.estado = SELECAO
         self.restante_s = 0.0

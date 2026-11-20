@@ -2,9 +2,9 @@
 B3 = desligar o Raspberry Pi (`sudo poweroff`). Lógica separada da tela e do GPIO.
 
 Regra: só o aperto MUITO LONGO (≥ LIMITE_MUITO_LONGO_S = 3 s, classificado ao soltar)
-desliga. Curto e longo são ignorados, e soltar antes dos 3 s cancela: com botão
-instável, um toque sem querer não derruba o sistema. Enquanto segura, a linha de
-baixo da tela mostra a contagem.
+desliga. Soltar antes dos 3 s cancela: com botão instável, um toque sem querer não
+derruba o sistema. Enquanto segura, a linha de baixo da tela mostra a contagem. Um
+clique CURTO só mostra a dica `SEGURE 3s: DESLIGAR` por B3_DICA_CLIQUE_S (2 s).
 
 O `poweroff` NÃO corta a energia do Pi 3B (ele não tem botão de power): depois dele,
 só religando a fonte. Espere o LED verde (ACT) parar de piscar antes de tirar da tomada.
@@ -15,13 +15,15 @@ import subprocess
 import time
 
 from pomodoro_config import (
-    COMANDO_DESLIGAR, B3_DICA_APOS_S, LIMITE_MUITO_LONGO_S, MENSAGEM_FALHA_DESLIGAR_S,
+    COMANDO_DESLIGAR, B3_DICA_APOS_S, B3_DICA_CLIQUE_S, LIMITE_MUITO_LONGO_S,
+    MENSAGEM_FALHA_DESLIGAR_S,
 )
-from pomodoro_logica import MUITO_LONGO
+from pomodoro_logica import CURTO, MUITO_LONGO
 
 TEXTO_DESLIGANDO = "DESLIGANDO, AGUARDE"
 TEXTO_FALHOU = "FALHOU DESLIGAR"
 TEXTO_SOLTE = "SOLTE: DESLIGAR PI"
+TEXTO_DICA = f"SEGURE {LIMITE_MUITO_LONGO_S:g}s: DESLIGAR"
 
 
 def montar_comando(root=None):
@@ -50,10 +52,16 @@ class Desligamento:
         self._root = root
         self.em_andamento = False   # comando aceito: o sistema vai desligar
         self._falha_ate = 0.0
+        self._dica_ate = 0.0
 
     def botao(self, tipo):
         """Evento do B3. Devolve True se pediu o desligamento (e o comando foi aceito)."""
-        if tipo != MUITO_LONGO or self.em_andamento:
+        if self.em_andamento:
+            return False
+        if tipo == CURTO:      # clique curto: só lembra como desliga
+            self._dica_ate = self._relogio() + B3_DICA_CLIQUE_S
+            return False
+        if tipo != MUITO_LONGO:
             return False
         if self._executar(montar_comando(self._root)):
             self.em_andamento = True
@@ -71,4 +79,6 @@ class Desligamento:
             return TEXTO_SOLTE
         if segurando_s >= B3_DICA_APOS_S:
             return f"SEGURE {math.ceil(LIMITE_MUITO_LONGO_S - segurando_s)}s: DESLIGAR"
+        if self._relogio() < self._dica_ate:
+            return TEXTO_DICA
         return None

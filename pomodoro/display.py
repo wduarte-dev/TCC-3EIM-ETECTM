@@ -6,7 +6,8 @@ Tela de 128x64. Duas partes:
 2. Backends: OLED (luma.oled/SSD1306 via I2C), emulador pygame (notebook) e PNG
    (grava um arquivo; funciona até por SSH).
 
-Sem acentos nos textos: a fonte padrão do display não tem.
+Fonte: DejaVu Sans Bold (tem acentos). Sem ela, o Pillow cai na fonte padrão e os
+acentos somem: o instalar.sh avisa se faltar (pacote fonts-dejavu-core).
 """
 import math
 
@@ -55,19 +56,30 @@ def _texto(draw, xy, texto, tamanho=10, preenchimento=1, ancora="la"):
     draw.text(xy, texto, font=fonte, fill=preenchimento, anchor=ancora)
 
 
+def _largura(texto, tamanho):
+    fonte = _fonte(tamanho) or ImageFont.load_default()
+    return fonte.getlength(texto)
+
+
 def formatar_tempo(segundos):
     """Segundos → 'MM:SS' (arredonda pra cima: começa em 25:00 e o 00:00 só no fim)."""
     total = max(0, math.ceil(segundos))
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
+_NOME_FASE = {FOCO: "FOCO", PAUSA: "PAUSA", PAUSA_LONGA: "P.LONGA"}   # P.LONGA: o nome inteiro encosta no preset
+
+
 def _texto_fase(pomo):
-    return {
-        FOCO: "FOCO",
-        PAUSA: "PAUSA",
-        PAUSA_LONGA: "PAUSA LONGA",
-        PAUSADO: "|| " + {FOCO: "FOCO", PAUSA: "PAUSA", PAUSA_LONGA: "P.LONGA"}.get(pomo.fase_atual, ""),
-    }.get(pomo.estado, "")
+    """Canto direito do topo: '<FASE> n/4' (a fase continua aparecendo quando pausado)."""
+    nome = _NOME_FASE.get(pomo.fase_atual, "")
+    return f"{nome} {pomo.ciclo_atual}/{pomo.ciclos_ate_longa}"
+
+
+def _icone_pausa(d, x, y=1):
+    """Duas barras verticais de 3x9 px (o ícone ocupa 9 px + 3 de folga até o texto)."""
+    d.rectangle((x, y, x + 2, y + 8), fill=1)
+    d.rectangle((x + 6, y, x + 8, y + 8), fill=1)
 
 
 # Enquadramento (T2'): mini-figura com os 3 pontos que a postura usa, no canto direito
@@ -111,14 +123,16 @@ def desenhar(pomo, texto_postura, status_postura=None, segurando_tipo=None, pisc
     dica = pomo.rotulo_aperto(segurando_tipo) if segurando_tipo else ""
 
     if pomo.estado == SELECAO:
-        _texto(d, (LARGURA // 2, 0), "ESCOLHA O TEMPO", 9, ancora="ma")
+        _texto(d, (LARGURA // 2, 0), "TEMPO", 9, ancora="ma")
         _texto(d, (LARGURA // 2, 26), pomo.preset["nome"], 26, ancora="mm")
-        linha = f"SOLTE: {dica}" if dica else "curto=troca longo=ok"
-        _texto(d, (LARGURA // 2, 41), linha, 9, ancora="ma")
+        if dica:      # sem dica fixa de "curto/longo" (19/11): só o aviso de quando soltar
+            _texto(d, (LARGURA // 2, 41), f"SOLTE: {dica}", 9, ancora="ma")
     else:
-        topo_esq = f"{pomo.preset['nome']}  C{pomo.ciclo_atual}/{pomo.ciclos_ate_longa}"
-        _texto(d, (0, 0), topo_esq, 9)
-        _texto(d, (LARGURA - 1, 0), _texto_fase(pomo), 9, ancora="ra")
+        _texto(d, (0, 0), pomo.preset["nome"], 9)
+        fase = _texto_fase(pomo)
+        _texto(d, (LARGURA - 1, 0), fase, 9, ancora="ra")
+        if pomo.estado == PAUSADO:
+            _icone_pausa(d, LARGURA - 1 - int(round(_largura(fase, 9))) - 12)
         _texto(d, (LARGURA // 2, 28), formatar_tempo(pomo.restante_s), 26, ancora="mm")
         if dica:
             _texto(d, (LARGURA // 2, 41), f"SOLTE: {dica}", 9, ancora="ma")
