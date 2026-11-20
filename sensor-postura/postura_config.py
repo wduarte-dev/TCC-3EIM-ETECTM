@@ -17,6 +17,8 @@ DIR_BASE = os.path.dirname(os.path.realpath(__file__))
 CAMINHO_MODELO = os.path.join(DIR_BASE, "movenet_lightning.tflite")
 DIR_VIDEOS = os.path.join(DIR_BASE, "videos")
 DIR_LOGS = os.path.join(DIR_BASE, "logs")
+DIR_FOTOS = os.path.join(DIR_BASE, "fotos")   # `postura foto` (T5); não vai pro Git
+FOTO_LARGURA = 320                             # JPEG reduzido: leve pra baixar por scp
 
 # Última baseline calibrada ao vivo. Só é reaproveitada se o programa
 # reiniciar no MESMO boot (ex: travou e o systemd religou). Depois de um

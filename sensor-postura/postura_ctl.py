@@ -6,6 +6,7 @@ Controle remoto do monitor de postura. Instalado como o comando `postura`.
     postura recalibrar    calibra (contagem de 10s pra se ajeitar, mostrada aqui)
     postura gravar N      grava N segundos da webcam em videos/ (N maior que 5)
     postura janela        abre o monitor com a janela da câmera (precisa de ssh -X)
+    postura foto          salva um JPEG do último quadro com os 3 pontos (baixe com scp)
     postura live          volta pra câmera ao vivo (fica aguardando calibração)
     postura video [N]     troca pra um vídeo da pasta videos/ (sem N, mostra a lista)
     postura videos        só lista os vídeos
@@ -112,6 +113,17 @@ def cmd_status():
         print("Pontos:      " + "  ".join(f"{'●' if v else '○'} {nomes.get(k, k)}" for k, v in visiveis.items()))
     print(f"FPS:         {estado.get('fps', 0)}")
     print(f"Atualizado:  {estado.get('atualizado')}   (rodando desde {estado.get('inicio')})")
+
+
+def cmd_foto():
+    resposta = enviar({"acao": "foto"})
+    if not resposta.get("ok"):
+        sys.exit(f"Erro: {resposta.get('erro', 'desconhecido')}")
+    caminho = resposta["arquivo"]
+    print(f"Foto salva: {caminho}")
+    if not EH_WINDOWS:
+        usuario = os.environ.get("USER", "usuario")
+        print(f"Pra ver no seu computador:  scp {usuario}@raspberrypi.local:{caminho} .")
 
 
 def cmd_videos():
@@ -221,6 +233,8 @@ def main():
         mostrar_resposta(enviar({"acao": "live"}))
     elif comando == "video":
         cmd_video(argumento)
+    elif comando in ("foto", "print"):
+        cmd_foto()
     elif comando == "videos":
         cmd_videos()
     elif comando in ("recalibrar", "recalibracao", "recalibração", "calibrar"):
