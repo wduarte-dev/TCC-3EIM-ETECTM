@@ -37,6 +37,12 @@ if [ -z "$PY" ] || ! testar_python "$PY"; then
 fi
 echo "Python: $PY"
 
+# Fonte da tela (acentos e tamanhos aprovados dependem dela)
+if [ ! -f /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf ]; then
+    echo "AVISO: fonte DejaVu Sans Bold não encontrada: sem ela os acentos somem da tela."
+    echo "       Instale com:  sudo apt install fonts-dejavu-core"
+fi
+
 sudo tee /etc/systemd/system/pomodoro.service >/dev/null <<EOF
 [Unit]
 Description=Pomodoro com display OLED e botoes (TCC)

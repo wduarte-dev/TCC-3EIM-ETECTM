@@ -10,8 +10,9 @@ Botões:
     B1 (GPIO17)  RECALIBRAÇÃO (não mexe no pomodoro):
                  curto alterna POSTURA ↔ VOZ, longo recalibra a opção mostrada
     B2 (GPIO27)  SELEÇÃO: curto troca o preset, longo inicia
-                 rodando/pausado: longo pausa/retoma, muito longo reinicia
-    B3 (GPIO22)  DESLIGAR O PI: segure 3 s e solte (sudo poweroff); soltar antes cancela
+                 rodando/pausado: curto pausa/retoma, longo volta pra seleção
+    B3 (GPIO22)  DESLIGAR O PI: segure 3 s e solte (sudo poweroff); soltar antes cancela;
+                 clique curto só mostra a dica por 2 s
 """
 import argparse
 import os

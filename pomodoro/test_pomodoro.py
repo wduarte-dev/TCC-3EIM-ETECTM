@@ -52,10 +52,10 @@ class TesteSelecao(unittest.TestCase):
         self.assertEqual(p.estado, FOCO)
         self.assertEqual(p.restante_s, 5 * 60)
 
-    def test_muito_longo_na_selecao_nao_faz_nada(self):
+    def test_muito_longo_na_selecao_vale_como_longo(self):
         p = novo()
-        self.assertEqual(p.botao(MUITO_LONGO), [])
-        self.assertEqual(p.estado, SELECAO)
+        self.assertEqual(p.botao(MUITO_LONGO), [EV_INICIOU])
+        self.assertEqual(p.estado, FOCO)
 
     def test_tick_na_selecao_nao_faz_nada(self):
         p = novo()
@@ -113,15 +113,17 @@ class TesteCiclo(unittest.TestCase):
 
 
 class TestePausaEReinicio(unittest.TestCase):
-    def test_longo_pausa_congela_e_longo_retoma(self):
+    """Mapa do B2 de 19/11: rodando/pausado, curto pausa/retoma e longo volta pra seleção."""
+
+    def test_curto_pausa_congela_e_curto_retoma(self):
         p = novo()
         p.botao(LONGO)
         p.tick(30)
-        self.assertEqual(p.botao(LONGO), [EV_PAUSOU])
+        self.assertEqual(p.botao(CURTO), [EV_PAUSOU])
         self.assertEqual(p.estado, PAUSADO)
         p.tick(1000)                                  # tempo passa, timer não
         self.assertEqual(p.restante_s, 90)
-        self.assertEqual(p.botao(LONGO), [EV_RETOMOU])
+        self.assertEqual(p.botao(CURTO), [EV_RETOMOU])
         self.assertEqual(p.estado, FOCO)
         p.tick(10)
         self.assertEqual(p.restante_s, 80)
@@ -130,45 +132,38 @@ class TestePausaEReinicio(unittest.TestCase):
         p = novo()
         p.botao(LONGO)
         p.tick(120)                                   # entrou na PAUSA
-        p.botao(LONGO)
+        p.botao(CURTO)
         self.assertEqual(p.estado, PAUSADO)
         self.assertEqual(p.fase_atual, PAUSA)
-        p.botao(LONGO)
+        p.botao(CURTO)
         self.assertEqual(p.estado, PAUSA)
 
-    def test_curto_fora_da_selecao_e_ignorado(self):
-        p = novo()
-        p.botao(LONGO)
-        self.assertEqual(p.botao(CURTO), [])
-        self.assertEqual(p.estado, FOCO)
-        p.botao(LONGO)
-        self.assertEqual(p.botao(CURTO), [])
-        self.assertEqual(p.estado, PAUSADO)
-
-    def test_muito_longo_reinicia_rodando_e_pausado(self):
-        for pausar_antes in (False, True):
-            p = novo()
-            p.botao(CURTO)                            # preset B
-            p.botao(LONGO)
-            p.tick(50)
-            if pausar_antes:
+    def test_longo_e_muito_longo_voltam_pra_selecao(self):
+        for tipo in (LONGO, MUITO_LONGO):
+            for pausar_antes in (False, True):
+                p = novo()
+                p.botao(CURTO)                        # preset B
                 p.botao(LONGO)
-            self.assertEqual(p.botao(MUITO_LONGO), [EV_REINICIOU])
-            self.assertEqual(p.estado, SELECAO)
-            self.assertEqual(p.focos_concluidos, 0)
-            self.assertEqual(p.preset["nome"], "B")   # mantém o preset escolhido
-            p.botao(LONGO)
-            self.assertEqual(p.restante_s, 5 * 60)    # recomeça do zero
+                p.tick(50)
+                if pausar_antes:
+                    p.botao(CURTO)
+                self.assertEqual(p.botao(tipo), [EV_REINICIOU])
+                self.assertEqual(p.estado, SELECAO)
+                self.assertEqual(p.focos_concluidos, 0)
+                self.assertEqual(p.preset["nome"], "B")   # mantém o preset escolhido
+                p.botao(LONGO)
+                self.assertEqual(p.restante_s, 5 * 60)    # recomeça do zero
 
     def test_rotulos_da_dica_enquanto_segura(self):
         p = novo()
         self.assertEqual(p.rotulo_aperto(LONGO), "INICIAR")
-        self.assertEqual(p.rotulo_aperto(MUITO_LONGO), "")
+        self.assertEqual(p.rotulo_aperto(MUITO_LONGO), "INICIAR")
+        self.assertEqual(p.rotulo_aperto(CURTO), "")
         p.botao(LONGO)
-        self.assertEqual(p.rotulo_aperto(LONGO), "PAUSAR")
-        self.assertEqual(p.rotulo_aperto(MUITO_LONGO), "REINICIAR")
-        p.botao(LONGO)
-        self.assertEqual(p.rotulo_aperto(LONGO), "RETOMAR")
+        self.assertEqual(p.rotulo_aperto(LONGO), "VOLTAR")
+        self.assertEqual(p.rotulo_aperto(MUITO_LONGO), "VOLTAR")
+        p.botao(CURTO)
+        self.assertEqual(p.rotulo_aperto(LONGO), "VOLTAR")
 
 
 class TesteMenuB1(unittest.TestCase):
@@ -367,14 +362,14 @@ class TesteTela(unittest.TestCase):
 
     def test_desenha_todas_as_telas_no_tamanho_certo(self):
         p = novo()
-        imagens = [self.display.desenhar(p, "POSTURA OK")]                         # seleção
+        imagens = [self.display.desenhar(p, "POSTURA: BOA")]                       # seleção
         imagens.append(self.display.desenhar(p, "X", segurando_tipo=LONGO))
         p.botao(LONGO)
-        imagens.append(self.display.desenhar(p, "POSTURA OK", "CORRETA"))          # foco
-        imagens.append(self.display.desenhar(p, "ALERTA: POSTURA!", "ALERTA"))     # alerta
-        imagens.append(self.display.desenhar(p, "POSTURA OK", piscando=True))      # piscando
-        p.botao(LONGO)
-        imagens.append(self.display.desenhar(p, "POSTURA OK"))                     # pausado
+        imagens.append(self.display.desenhar(p, "POSTURA: BOA", "CORRETA"))        # foco
+        imagens.append(self.display.desenhar(p, "POSTURA: RUIM", "ALERTA"))        # alerta
+        imagens.append(self.display.desenhar(p, "POSTURA: BOA", piscando=True))    # piscando
+        p.botao(CURTO)
+        imagens.append(self.display.desenhar(p, "POSTURA: BOA"))                   # pausado
         for img in imagens:
             self.assertEqual(img.size, (128, 64))
             self.assertEqual(img.mode, "1")
@@ -401,8 +396,36 @@ class TesteTela(unittest.TestCase):
     def test_textos_com_figura_nao_encostam_nos_pontos(self):
         fonte = self.display._fonte(9)
         limite = self.display.X_OUTRO_OMBRO - self.display.RAIO_PONTO - 2
-        for t in ("AJEITE-SE! 10s", "CALIBRANDO...", "CALIBRACAO FALHOU", "SEM USUARIO"):
+        for t in ("COMEÇANDO EM: 10s", "CALIBRANDO...", "CALIBRACAO FALHOU", "SEM USUARIO"):
             self.assertLessEqual(fonte.getlength(t), limite, t)
+
+    def test_selecao_sem_dica_fixa(self):
+        p = novo()
+        img = self.display.desenhar(p, "POSTURA: BOA")
+        self.assertIsNone(img.crop((0, 40, 128, 50)).getbbox())    # faixa da dica vazia
+        img = self.display.desenhar(p, "POSTURA: BOA", segurando_tipo=LONGO)
+        self.assertIsNotNone(img.crop((0, 40, 128, 50)).getbbox())  # SOLTE: INICIAR
+
+    def test_topo_mostra_fase_e_ciclo_e_icone_so_pausado(self):
+        p = Pomodoro(presets=PRESETS)                  # 4 ciclos
+        p.botao(LONGO)
+        self.assertEqual(self.display._texto_fase(p), "FOCO 1/4")
+        p.tick(120)
+        self.assertEqual(self.display._texto_fase(p), "PAUSA 1/4")
+        largura = self.display._largura("PAUSA 1/4", 9)
+        x_icone = 127 - int(round(largura)) - 12
+        rodando = self.display.desenhar(p, "X")
+        self.assertIsNone(rodando.crop((x_icone, 1, x_icone + 9, 10)).getbbox())
+        p.botao(CURTO)
+        pausado = self.display.desenhar(p, "X")
+        self.assertEqual(self.display._texto_fase(p), "PAUSA 1/4")
+        self.assertIsNotNone(pausado.crop((x_icone, 1, x_icone + 9, 10)).getbbox())
+
+    def test_pausa_longa_abreviada(self):
+        p = novo(ciclos=1)
+        p.botao(LONGO)
+        p.tick(120)
+        self.assertEqual(self.display._texto_fase(p), "P.LONGA 1/1")
 
     def test_piscar_inverte_a_imagem(self):
         p = novo()
@@ -414,16 +437,27 @@ class TesteTela(unittest.TestCase):
 class TestePostura(unittest.TestCase):
     def test_texto_curto(self):
         from postura_cliente import texto_curto
-        self.assertEqual(texto_curto(None), "POSTURA OFFLINE")
-        self.assertEqual(texto_curto({"status": "CORRETA"}), "POSTURA OK")
-        self.assertEqual(texto_curto({"status": "ALERTA"}), "ALERTA: POSTURA!")
+        self.assertEqual(texto_curto(None), "POSTURA: SEM SERVIÇO")
+        self.assertEqual(texto_curto({"status": "CORRETA"}), "POSTURA: BOA")
+        self.assertEqual(texto_curto({"status": "CALIBRADO"}), "POSTURA: BOA")
+        self.assertEqual(texto_curto({"status": "ATENCAO"}), "POSTURA: ATENÇÃO")
+        self.assertEqual(texto_curto({"status": "ALERTA"}), "POSTURA: RUIM")
         self.assertEqual(texto_curto({"status": "AGUARDANDO_CALIBRACAO"}), "APERTE B1: CALIBRAR")
         self.assertEqual(
             texto_curto({"status": "CONTAGEM", "texto": "Fique na postura CORRETA. Calibrando em 7s..."}),
-            "AJEITE-SE! 7s")
-        for status in ("CORRETA", "ATENCAO", "ALERTA", "AGUARDANDO_CALIBRACAO", "CONTAGEM",
-                       "CALIBRANDO", "CALIBRACAO_FALHOU", "SEM_CAMERA", "SEM_USUARIO", "INICIANDO"):
-            self.assertLessEqual(len(texto_curto({"status": status, "texto": "em 3s"})), 21, status)
+            "COMEÇANDO EM: 7s")
+        try:
+            import display
+        except ImportError:
+            return
+        fonte = display._fonte(9)
+        for status in ("CORRETA", "ATENCAO", "ALERTA", "AGUARDANDO_CALIBRACAO", "CALIBRANDO",
+                       "CALIBRACAO_FALHOU", "SEM_CAMERA", "SEM_USUARIO", "INICIANDO", None):
+            estado = None if status is None else {"status": status, "texto": "em 3s"}
+            self.assertLessEqual(fonte.getlength(texto_curto(estado)), 128, status)
+        # na contagem divide a linha com a figura dos 3 pontos
+        limite = display.X_OUTRO_OMBRO - display.RAIO_PONTO - 2
+        self.assertLessEqual(fonte.getlength(texto_curto({"status": "CONTAGEM", "texto": "em 10s"})), limite)
 
     def test_pontos_do_enquadramento(self):
         from postura_cliente import pontos_enquadramento
@@ -628,6 +662,7 @@ class TesteDesligamento(unittest.TestCase):
         self.assertFalse(d.botao(CURTO))
         self.assertFalse(d.botao(LONGO))
         self.assertEqual(chamadas, [])
+        self.assertFalse(d.em_andamento)
         self.assertTrue(d.botao(MUITO_LONGO))
         self.assertEqual(chamadas, [["sudo", "-n", "poweroff"]])
         self.assertTrue(d.em_andamento)
@@ -659,6 +694,18 @@ class TesteDesligamento(unittest.TestCase):
         self.assertEqual(d.texto(1.2), "SEGURE 2s: DESLIGAR")
         self.assertEqual(d.texto(2.9), "SEGURE 1s: DESLIGAR")
         self.assertEqual(d.texto(3.0), energia.TEXTO_SOLTE)
+
+    def test_clique_curto_mostra_a_dica_por_2_s(self):
+        t = [0.0]
+        d = Desligamento(executar=lambda c: True, relogio=lambda: t[0], root=False)
+        d.botao(CURTO)
+        self.assertEqual(d.texto(0), "SEGURE 3s: DESLIGAR")
+        t[0] = 1.9
+        self.assertEqual(d.texto(0), "SEGURE 3s: DESLIGAR")
+        t[0] = 2.1
+        self.assertIsNone(d.texto(0))
+        d.botao(LONGO)                                 # longo solto antes dos 3 s: nada
+        self.assertIsNone(d.texto(0))
 
     def test_rodar_comando_devolve_false_em_vez_de_quebrar(self):
         import sys

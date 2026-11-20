@@ -2,7 +2,7 @@
 Cliente do serviço de postura. Fala com o socket Unix do postura_servico.py
 (o mesmo que o comando `postura` usa) e NÃO mexe na câmera.
 
-Se o serviço não estiver rodando, devolve None e a tela mostra "POSTURA OFFLINE".
+Se o serviço não estiver rodando, devolve None e a tela mostra "POSTURA: SEM SERVIÇO".
 """
 import json
 import socket
@@ -36,28 +36,26 @@ def enviar(pedido, caminho=CAMINHO_SOCKET_POSTURA, timeout=TIMEOUT_POSTURA_S):
 
 def texto_curto(estado):
     """
-    Estado do serviço → texto curto pra caber na linha da tela (~21 caracteres,
-    sem acento: a fonte padrão do display não tem).
+    Estado do serviço → texto curto pra caber na linha da tela (≤ 128 px na DejaVu
+    Sans Bold 9; textos aprovados em 19/11, ver claude/display-telas-aprovadas.md).
     """
     if estado is None:
-        return "POSTURA OFFLINE"
+        return "POSTURA: SEM SERVIÇO"
     status = estado.get("status", "")
-    if status == "CORRETA":
-        return "POSTURA OK"
+    if status in ("CORRETA", "CALIBRADO"):
+        return "POSTURA: BOA"
     if status == "ATENCAO":
-        return "POSTURA: ATENCAO"
+        return "POSTURA: ATENÇÃO"
     if status == "ALERTA":
-        return "ALERTA: POSTURA!"
+        return "POSTURA: RUIM"
     if status == "AGUARDANDO_CALIBRACAO":
         return "APERTE B1: CALIBRAR"
     if status == "CONTAGEM":
         # texto original: "Fique na postura CORRETA. Calibrando em 7s..."
         numero = "".join(c for c in estado.get("texto", "").split("em")[-1] if c.isdigit())
-        return f"AJEITE-SE! {numero}s" if numero else "AJEITE-SE!"
+        return f"COMEÇANDO EM: {numero}s" if numero else "COMEÇANDO..."
     if status == "CALIBRANDO":
         return "CALIBRANDO..."
-    if status == "CALIBRADO":
-        return "POSTURA OK"
     if status == "CALIBRACAO_FALHOU":
         return "CALIBRACAO FALHOU"
     if status == "SEM_CAMERA":

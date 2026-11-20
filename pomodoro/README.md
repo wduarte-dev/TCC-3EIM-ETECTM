@@ -42,7 +42,9 @@ Não usar os pinos 3 e 5 (I2C do display).
 
 Os botões são classificados **ao soltar**: **curto** < 1 s, **longo** de 1 a 3 s, **muito longo** ≥ 3 s
 (`LIMITE_LONGO_S` e `LIMITE_MUITO_LONGO_S` no `pomodoro_config.py`). Enquanto o botão está
-segurado, a tela mostra o que vai acontecer ao soltar (`SOLTE: PAUSAR`, `SOLTE: REINICIAR`...).
+segurado, a tela mostra o que vai acontecer ao soltar (`SOLTE: INICIAR`, `SOLTE: VOLTAR`...). Não há
+dica fixa de "curto/longo" na tela (decisão de 19/11: ocupa espaço e não informa nada concreto); o mapa
+dos botões vai num adesivo na caixa.
 
 ### B1: recalibrar postura ou voz
 
@@ -62,9 +64,10 @@ segurado, a tela mostra o que vai acontecer ao soltar (`SOLTE: PAUSAR`, `SOLTE: 
 
 | B3 | O que acontece |
 |---|---|
+| **clique curto** | só mostra `SEGURE 3s: DESLIGAR` na linha de baixo por 2 s (`B3_DICA_CLIQUE_S`), pra lembrar como desliga |
 | segurar | a partir de 0,5 s a linha de baixo mostra `SEGURE 3s: DESLIGAR` (contagem); aos 3 s, `SOLTE: DESLIGAR PI` |
 | **soltar depois de 3 s** (muito longo) | roda `sudo -n poweroff`; a tela mostra `DESLIGANDO, AGUARDE` e fica assim até o fim |
-| soltar antes de 3 s (curto ou longo) | **cancela**, não faz nada |
+| soltar entre 1 e 3 s (longo) | **cancela**, não faz nada |
 | comando falhou | `FALHOU DESLIGAR` por 3 s (quase sempre: o sudo pediu senha) |
 
 - 3 s com soltar é de propósito: com botão que já deu leitura instável, um toque sem querer não derruba o sistema.
@@ -76,13 +79,25 @@ segurado, a tela mostra o que vai acontecer ao soltar (`SOLTE: PAUSAR`, `SOLTE: 
 
 ### B2: pomodoro
 
-| Estado | B2 curto | B2 longo | B2 muito longo |
-|---|---|---|---|
-| Escolhendo o tempo | troca o preset | **inicia** o foco | nada |
-| Rodando (foco ou descanso) | ignora | **pausa** | **reinicia** (volta pra escolha) |
-| Pausado | ignora | **retoma** | **reinicia** |
+| Estado | B2 curto | B2 longo (≥ 1 s) |
+|---|---|---|
+| Escolhendo o tempo | troca o preset | **inicia** o foco (`SOLTE: INICIAR`) |
+| Rodando (foco ou descanso) | **pausa** | **volta** pra escolha e zera o bloco (`SOLTE: VOLTAR`) |
+| Pausado | **retoma** | **volta** pra escolha |
 
-Curto fora da escolha é ignorado de propósito: um toque sem querer não atrapalha o timer.
+No B2 o "muito longo" vale como longo (só o B3 usa os 3 s). Troca de 19/11: antes o curto era
+ignorado fora da escolha; agora um toque sem querer **pausa** o timer, em troca de pausar com um
+clique (usabilidade × segurança contra toque acidental; não testado no Pi).
+
+## Telas (aprovadas em 19/11)
+
+- **Escolha:** título `TEMPO`, o preset grande no meio e, só enquanto o B2 está segurado, `SOLTE: ...`.
+- **Rodando:** canto esquerdo do topo = preset (`25/5`); canto direito = fase e ciclo (`FOCO 1/4`,
+  `PAUSA 1/4`, `P.LONGA 4/4`; `P.LONGA` porque o nome inteiro encosta no preset). **Pausado:** ícone
+  de pausa (duas barras) à esquerda da fase.
+- **Linha de baixo (postura):** `POSTURA: BOA`, `POSTURA: ATENÇÃO`, `POSTURA: RUIM` (linha invertida),
+  `POSTURA: SEM SERVIÇO` (serviço de postura fora), `COMEÇANDO EM: 7s` (contagem da calibração). Os
+  outros avisos (`APERTE B1: CALIBRAR`, `CALIBRANDO...`, `SEM CAMERA`...) seguem como eram.
 
 ## Enquadramento: os 3 pontos na tela
 
@@ -148,7 +163,7 @@ python main.py --display png --botoes teclado --velocidade 60
 ```
 
 Janela do emulador em vez de PNG: `pip install luma.emulator pygame` e `--display pygame`.
-Sem o serviço de postura rodando, a linha de baixo mostra `POSTURA OFFLINE`.
+Sem o serviço de postura rodando, a linha de baixo mostra `POSTURA: SEM SERVIÇO`.
 
 ## No Raspberry Pi
 
@@ -178,9 +193,9 @@ Depois `python main.py` e confira no log a polaridade descoberta de cada botão.
 - Não foi testado no hardware real (OLED, módulos de botão, `sudo poweroff` pelo B3, fonte de energia do Pi). A leitura dos
   botões foi testada com pinos simulados (`MockFactory` do gpiozero) e sequências sintéticas de repique, não com o módulo real.
 - A polaridade automática falha se um botão estiver apertado ao iniciar (inverte a lógica daquele botão até reiniciar).
-- A fonte padrão do Pillow não tem acentos; os textos da tela são sem acento de propósito.
-- O aspecto da tela no OLED depende da fonte instalada no Pi (usa DejaVu Sans Bold se existir,
-  senão a fonte padrão do Pillow).
+- A tela usa **DejaVu Sans Bold** (tem acentos: `ATENÇÃO`, `SERVIÇO`, `COMEÇANDO`). Sem ela o Pillow
+  cai na fonte padrão, os acentos somem e o layout muda; o `instalar.sh` avisa
+  (`sudo apt install fonts-dejavu-core`). Alguns textos antigos seguem sem acento (`CALIBRACAO FALHOU`).
 - Se o serviço de postura já estiver calibrando, ele recusa o pedido do B1 (não faz nada).
 - A calibração da voz grava `sensor-voz/baseline_voz.json`, que **não é versionado** (`.gitignore`): cada máquina/mic tem a sua. Sem ele o menu do B1 mostra `CALIBRAR: VOZ`. Se o Pi já tinha o arquivo vindo do repo, o `git pull` apaga a cópia (aí é só calibrar de novo).
 - Menu do B1 com fechamento em 5 s, o limiar de 1 s do "longo", o de 3 s do desligar e o filtro de 40 ms são escolhas do projeto, sem validação própria.
