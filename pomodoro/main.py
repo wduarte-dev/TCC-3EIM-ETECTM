@@ -26,7 +26,7 @@ from pomodoro_config import (
 )
 from pomodoro_logica import Pomodoro, EV_FASE_MUDOU, LONGO, MUITO_LONGO
 from recalibracao import MenuB1, ACAO_RECALIBRAR, POSTURA, VOZ
-from postura_cliente import MonitorPostura, texto_curto
+from postura_cliente import MonitorPostura, texto_curto, pontos_enquadramento
 from voz_cliente import RecalibradorVoz, VozSimulada
 from display import criar_display, desenhar
 from energia import Desligamento, TEXTO_DESLIGANDO
@@ -137,6 +137,7 @@ def main():
                 status_postura=None if texto_baixo else (estado_postura or {}).get("status"),
                 segurando_tipo=segurando if segurando in (LONGO, MUITO_LONGO) else None,
                 piscando=agora < piscar_ate and int(agora * 2) % 2 == 0,   # pisca ~2x por segundo
+                pontos=None if texto_baixo else pontos_enquadramento(estado_postura),
             )
             tela.mostrar(imagem)
 

@@ -106,6 +106,10 @@ def cmd_status():
     print(f"Status:      {estado['texto']}")
     if estado.get("baseline_angulo") is not None:
         print(f"Baseline:    ângulo {estado['baseline_angulo']}° | razão {estado['baseline_razao']}")
+    visiveis = estado.get("pontos_visiveis")
+    if visiveis:
+        nomes = {"orelha": "orelha", "ombro_orelha": "ombro (lado da orelha)", "outro_ombro": "outro ombro"}
+        print("Pontos:      " + "  ".join(f"{'●' if v else '○'} {nomes.get(k, k)}" for k, v in visiveis.items()))
     print(f"FPS:         {estado.get('fps', 0)}")
     print(f"Atualizado:  {estado.get('atualizado')}   (rodando desde {estado.get('inicio')})")
 

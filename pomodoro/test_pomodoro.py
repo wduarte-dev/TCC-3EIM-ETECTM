@@ -389,6 +389,21 @@ class TesteTela(unittest.TestCase):
         for t in textos:
             self.assertLessEqual(fonte.getlength(t), 128, t)
 
+    def test_figura_dos_pontos_cheio_e_vazado(self):
+        p = novo()
+        d = self.display
+        cheio = d.desenhar(p, "AJEITE-SE! 7s", pontos=(True, True, True))
+        falta = d.desenhar(p, "AJEITE-SE! 7s", pontos=(True, True, False))
+        self.assertTrue(cheio.getpixel((d.X_OUTRO_OMBRO, d.Y_OMBROS)))   # centro preenchido
+        self.assertFalse(falta.getpixel((d.X_OUTRO_OMBRO, d.Y_OMBROS)))     # só o contorno
+        self.assertTrue(falta.getpixel((d.X_OMBRO_ORELHA, d.Y_ORELHA)))
+
+    def test_textos_com_figura_nao_encostam_nos_pontos(self):
+        fonte = self.display._fonte(9)
+        limite = self.display.X_OUTRO_OMBRO - self.display.RAIO_PONTO - 2
+        for t in ("AJEITE-SE! 10s", "CALIBRANDO...", "CALIBRACAO FALHOU", "SEM USUARIO"):
+            self.assertLessEqual(fonte.getlength(t), limite, t)
+
     def test_piscar_inverte_a_imagem(self):
         p = novo()
         normal = self.display.desenhar(p, "OK")
@@ -409,6 +424,15 @@ class TestePostura(unittest.TestCase):
         for status in ("CORRETA", "ATENCAO", "ALERTA", "AGUARDANDO_CALIBRACAO", "CONTAGEM",
                        "CALIBRANDO", "CALIBRACAO_FALHOU", "SEM_CAMERA", "SEM_USUARIO", "INICIANDO"):
             self.assertLessEqual(len(texto_curto({"status": status, "texto": "em 3s"})), 21, status)
+
+    def test_pontos_do_enquadramento(self):
+        from postura_cliente import pontos_enquadramento
+        vis = {"orelha": True, "ombro_orelha": False, "outro_ombro": True}
+        self.assertEqual(pontos_enquadramento({"status": "CONTAGEM", "pontos_visiveis": vis}),
+                         (True, False, True))
+        self.assertIsNone(pontos_enquadramento({"status": "CORRETA", "pontos_visiveis": vis}))
+        self.assertIsNone(pontos_enquadramento({"status": "SEM_USUARIO", "pontos_visiveis": None}))
+        self.assertIsNone(pontos_enquadramento(None))
 
     def test_enviar_sem_servico_devolve_none(self):
         from postura_cliente import enviar

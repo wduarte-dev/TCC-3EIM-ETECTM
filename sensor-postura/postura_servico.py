@@ -54,7 +54,7 @@ from postura_config import (
     listar_videos,
 )
 from postura_logica import (
-    AvaliadorPostura, metricas, calcular_baseline,
+    AvaliadorPostura, metricas, calcular_baseline, pontos_visiveis, descrever_falta, PONTOS,
     CORRETA, ATENCAO, ALERTA,
 )
 
@@ -141,6 +141,9 @@ class DetectorPostura:
         self.indice_saida = detalhes_saida[0]['index']
         self.dtype_esperado = detalhes_entrada[0]['dtype']
         self.tamanho_entrada = detalhes_entrada[0]['shape'][1]  # normalmente 192 no Lightning
+        # confiança dos 3 pontos no último quadro (orelha, ombro do lado da orelha, outro
+        # ombro), mesmo quando o quadro não vale: é o que a tela de enquadramento mostra
+        self.ultimas_confiancas = (0.0, 0.0, 0.0)
 
     def detectar_metricas_postura(self, frame, limiar_confianca):
         """
@@ -160,6 +163,7 @@ class DetectorPostura:
         orelha_y, orelha_x, conf_orelha = keypoints[ORELHA_ESQ]
         ombro_esq_y, ombro_esq_x, conf_ombro_esq = keypoints[OMBRO_ESQ]
         ombro_dir_y, ombro_dir_x, conf_ombro_dir = keypoints[OMBRO_DIR]
+        self.ultimas_confiancas = (float(conf_orelha), float(conf_ombro_esq), float(conf_ombro_dir))
 
         if (conf_orelha <= limiar_confianca or conf_ombro_esq <= limiar_confianca
                 or conf_ombro_dir <= limiar_confianca):
@@ -345,6 +349,7 @@ class MonitorPostura:
             "desvio_angulo": None, "queda_razao_pct": None,
             "baseline_angulo": None, "baseline_razao": None,
             "fps": 0.0, "atualizado": None,
+            "pontos_visiveis": None,   # {orelha, ombro_orelha, outro_ombro: bool}; None = sem análise
             "inicio": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             # contadores que o `postura` acompanha pra saber quando terminou
             "calibracao": {"id": 0, "ok": None, "msg": ""},
@@ -413,6 +418,10 @@ class MonitorPostura:
             self.estado[chave] = dict(anterior, id=anterior["id"] + 1, **campos)
 
     # ---------------- utilidades ----------------
+
+    def _visiveis(self):
+        """{orelha, ombro_orelha, outro_ombro: bool} do último quadro analisado (vai no status)."""
+        return pontos_visiveis(self.detector.ultimas_confiancas, LIMIAR_CONFIANCA)
 
     def _pegar_comando(self):
         try:
@@ -506,7 +515,7 @@ class MonitorPostura:
             self.mostrar_status(
                 "SEM_CAMERA",
                 f"Câmera não encontrada (tentativa {tentativa}). Tentando de novo em {ESPERA_CAMERA_S}s...",
-                forcar=True,
+                forcar=True, pontos_visiveis=None,
             )
             self._dormir(ESPERA_CAMERA_S)
         return ("live", None)
@@ -539,7 +548,13 @@ class MonitorPostura:
                     continue
                 falhas = 0
                 segundos = math.ceil(restante)
-                self.mostrar_status("CONTAGEM", f"Fique na postura CORRETA. Calibrando em {segundos}s...", forcar=True)
+                # roda o MoveNet na contagem também: é aqui que a pessoa se ajeita olhando
+                # os 3 pontos no display (enquadramento, T2')
+                _, _, pontos = self.detector.detectar_metricas_postura(frame, LIMIAR_CONFIANCA)
+                if pontos is not None and self.preview:
+                    desenhar_pontos(frame, pontos)
+                self.mostrar_status("CONTAGEM", f"Fique na postura CORRETA. Calibrando em {segundos}s...",
+                                    forcar=True, pontos_visiveis=self._visiveis())
                 self._mostrar_preview(frame, [
                     ("Fique na postura CORRETA", (0, 255, 255)),
                     (f"Calibrando em {segundos}s", (0, 255, 255)),
@@ -547,6 +562,7 @@ class MonitorPostura:
 
         # --- Passo 2: coleta de amostras ---
         amostras_angulo, amostras_razao = [], []
+        faltas = {nome: 0 for nome in PONTOS}   # em quantos quadros cada ponto não apareceu
         inicio = time.time()
         frames_lidos = 0
         frames_alvo = int(DURACAO_CALIBRACAO * fps_video) if tipo == "video" else None
@@ -574,6 +590,9 @@ class MonitorPostura:
             frames_lidos += 1
 
             angulo_bruto, razao_pescoco, pontos = self.detector.detectar_metricas_postura(frame, LIMIAR_CONFIANCA)
+            visiveis = self._visiveis()
+            for nome, visivel in visiveis.items():
+                faltas[nome] += 0 if visivel else 1
             if angulo_bruto is not None and razao_pescoco is not None:
                 amostras_angulo.append(angulo_bruto)
                 amostras_razao.append(razao_pescoco)
@@ -587,7 +606,7 @@ class MonitorPostura:
             self.mostrar_status(
                 "CALIBRANDO",
                 f"Calibrando... fique parado ({math.ceil(restante)}s)",
-                forcar=True,
+                forcar=True, pontos_visiveis=visiveis,
             )
             self._mostrar_preview(frame, [(f"Calibrando... {restante:0.1f}s", (0, 255, 0))])
 
@@ -596,8 +615,14 @@ class MonitorPostura:
 
         baseline = calcular_baseline(amostras_angulo, amostras_razao)
         if baseline is None:
-            msg = "Calibração falhou (poucas detecções válidas). Confira se você aparece na câmera."
-            self.mostrar_status("CALIBRACAO_FALHOU", msg, forcar=True)
+            falta = descrever_falta(faltas, frames_lidos)
+            if falta:
+                msg = f"Calibração falhou: {falta}. Deixe os três pontos cheios no display."
+            else:
+                msg = "Calibração falhou (poucas detecções válidas). Confira se você aparece na câmera."
+            # na tela fica cheio o ponto que apareceu em pelo menos metade dos quadros
+            resumo = {nome: faltas[nome] * 2 < max(frames_lidos, 1) for nome in PONTOS}
+            self.mostrar_status("CALIBRACAO_FALHOU", msg, forcar=True, pontos_visiveis=resumo)
             self._registrar_fim("calibracao", ok=False, msg=msg)
             return ("falhou",)
 
@@ -769,7 +794,7 @@ class MonitorPostura:
                     time.sleep(0.05)
                     continue
                 falhas = 0
-                self.mostrar_status("AGUARDANDO_CALIBRACAO", TEXTO_AGUARDANDO)
+                self.mostrar_status("AGUARDANDO_CALIBRACAO", TEXTO_AGUARDANDO, pontos_visiveis=None)
                 self._mostrar_preview(frame, [("Aguardando calibracao", (255, 255, 255)),
                                               ("postura recalibrar  /  tecla r", (255, 255, 255))])
                 time.sleep(0.1)  # sem inferência aqui: alivia a CPU enquanto espera
@@ -822,7 +847,7 @@ class MonitorPostura:
                 status, f"{status_texto} | {fps:.1f} fps",
                 desvio_angulo=round(desvio_angulo, 1) if desvio_angulo is not None else None,
                 queda_razao_pct=round(queda_pct, 1) if queda_pct is not None else None,
-                fps=round(fps, 1),
+                fps=round(fps, 1), pontos_visiveis=self._visiveis(),
             )
 
             with self.lock:
