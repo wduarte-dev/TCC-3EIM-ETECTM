@@ -21,6 +21,10 @@ pelo comando `postura`.
 | `fotos/` | Última `postura foto` (não vai pro Git) |
 | `baseline.json` | Última calibração ao vivo (gerado sozinho, não vai pro Git) |
 
+O programa de coleta do estudo ([`../coleta/`](../coleta/)) importa `DetectorPostura` daqui e
+lê `ultimos_keypoints`/`ultimo_letterbox` (os 17 pontos do último quadro). Esses atributos só
+são guardados; a decisão do serviço não usa.
+
 ## Como funciona
 
 1. **Ao ligar, o sistema fica AGUARDANDO CALIBRAÇÃO.** A câmera fica ligada, mas

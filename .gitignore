@@ -161,3 +161,6 @@ cython_debug/
 
 # baseline pessoal da voz: gerada na calibração (B1), não versionar
 sensor-voz/baseline_voz.json
+
+# dados da coleta do estudo (pontos + metadados de participantes): não versionar
+coleta/dados/

@@ -9,6 +9,7 @@ o usuário vê tudo num display OLED 128x64 e usa 3 botões.
 |---|---|---|
 | [`sensor-postura/`](sensor-postura/) | Postura pela webcam (MoveNet): serviço do systemd + comando `postura` | Em uso |
 | [`pomodoro/`](pomodoro/) | Timer pomodoro no OLED, 3 botões (B1 menu postura/Wi-Fi, B2 pomodoro, B3 desligar) + comandos `pomodoro` e `wifi` | Em uso |
+| [`coleta/`](coleta/) | Programa de coleta do estudo de validação dos limiares (~30 pessoas, roda no notebook) | Pronto, não testado no Windows |
 | [`sensor-voz/`](sensor-voz/) | Fadiga vocal (jitter/shimmer/HNR via Praat) | **Fora do escopo** desde 19/11/2026 |
 
 Cada pasta tem o seu README com instalação, uso, testes e limitações.
