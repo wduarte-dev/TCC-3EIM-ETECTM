@@ -166,6 +166,45 @@ def desenhar(pomo, texto_postura, status_postura=None, segurando_tipo=None, pisc
     return img
 
 
+# ------------------------------------------------- telas cheias do Wi-Fi (T7) ----
+# Layout aprovado em 19/11 (claude/display-telas-aprovadas.md).
+
+def _icone_wifi(d, cx, cy, raios, largura=1, raio_ponto=1):
+    """Ponto embaixo + arcos pra cima (de 225° a 315°: o PIL conta em sentido horário a partir das 3 h)."""
+    d.ellipse((cx - raio_ponto, cy - raio_ponto, cx + raio_ponto, cy + raio_ponto), fill=1)
+    for r in raios:
+        d.arc((cx - r, cy - r, cx + r, cy + r), 225, 315, fill=1, width=largura)
+
+
+def desenhar_wifi_espera(ssid, senha, pontos=3):
+    """Espera (não fecha sozinha): ícone + CONECTANDO..., rede, senha, banda e como cancelar."""
+    img = Image.new("1", (LARGURA, ALTURA), 0)
+    d = ImageDraw.Draw(img)
+    _icone_wifi(d, 8, 11, (4, 7, 10))                     # ~16x11 px em x = 0..16
+    _texto(d, (20, 1), "CONECTANDO" + "." * pontos, 9)
+    d.line((0, 14, LARGURA - 1, 14), fill=1)
+    _texto(d, (0, 17), f"REDE:  {ssid}", 9)
+    _texto(d, (0, 28), f"SENHA: {senha}", 9)
+    _texto(d, (0, 39), "BANDA: 2.4 GHZ", 9)               # o Pi 3B só tem Wi-Fi 2.4 GHz
+    d.line((0, 51, LARGURA - 1, 51), fill=1)
+    _texto(d, (LARGURA // 2, 53), "CLIQUE: CANCELAR", 9, ancora="ma")
+    return img
+
+
+def desenhar_wifi_resultado(ok, ssid):
+    """Resultado momentâneo: ícone grande com ✓/✗, WIFI CONECTADO/FALHOU e o nome da rede."""
+    img = Image.new("1", (LARGURA, ALTURA), 0)
+    d = ImageDraw.Draw(img)
+    _icone_wifi(d, 50, 25, (7, 13, 20), largura=3, raio_ponto=2)
+    if ok:
+        _texto(d, (70, 6), "\u2713", 18)                  # ✓
+    else:
+        _texto(d, (70, 6), "\u2717", 16)                  # ✗
+    _texto(d, (LARGURA // 2, 33), "WIFI CONECTADO" if ok else "WIFI FALHOU", 12, ancora="ma")
+    _texto(d, (LARGURA // 2, 52), ssid, 9, ancora="ma")
+    return img
+
+
 # ---------------------------------------------------------------- backends ----
 
 class DisplayOLED:

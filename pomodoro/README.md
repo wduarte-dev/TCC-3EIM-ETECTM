@@ -2,7 +2,7 @@
 
 Timer de foco/pausa que roda no Raspberry Pi e mostra tudo no display OLED
 128x64. Também mostra, na linha de baixo, o status do monitor de postura
-(`sensor-postura/`) e deixa o usuário recalibrar a **postura** ou a **voz** (`sensor-voz/`)
+(`sensor-postura/`) e deixa o usuário recalibrar a **postura** ou **conectar o Wi-Fi**
 pelo botão B1. O B3 desliga o Pi.
 
 > **Estado:** a lógica, a tela, a ligação com a postura e a leitura dos botões (com pinos
@@ -17,7 +17,7 @@ Os botões são **3 módulos de 3 pinos (VCC, OUT, GND)**. Ligar **pelo nome imp
 |---|---|
 | VCC dos 3 (emendados) | pino 17 (**3,3 V**, nunca 5 V; o pino 1 é do OLED) |
 | GND dos 3 (emendados) | pino 9 |
-| OUT do **B1** | pino 11 (GPIO17): **recalibração** (postura ou voz; tabela abaixo). Não mexe no pomodoro |
+| OUT do **B1** | pino 11 (GPIO17): **menu** (recalibrar a postura ou conectar o Wi-Fi; tabela abaixo). Não mexe no pomodoro |
 | OUT do **B2** | pino 13 (GPIO27): pomodoro (tabela abaixo) |
 | OUT do **B3** | pino 15 (GPIO22): **desligar o Pi** (seção abaixo) |
 
@@ -46,19 +46,52 @@ segurado, a tela mostra o que vai acontecer ao soltar (`SOLTE: INICIAR`, `SOLTE:
 dica fixa de "curto/longo" na tela (decisão de 19/11: ocupa espaço e não informa nada concreto); o mapa
 dos botões vai num adesivo na caixa.
 
-### B1: recalibrar postura ou voz
+### B1: recalibrar a postura ou conectar o Wi-Fi
 
 | B1 | O que acontece |
 |---|---|
-| **curto** | abre o menu na linha de baixo (`RECALIBRAR: POSTURA`); cada novo clique alterna **POSTURA ↔ VOZ**. Quem ainda não foi calibrada (postura `AGUARDANDO_CALIBRACAO`; voz sem `baseline_voz.json`) aparece como `CALIBRAR: ...`; depois da primeira vez vira `RECALIBRAR: ...` |
-| **longo** (≥ 1 s) | **recalibra a opção mostrada** (enquanto segura aparece `SOLTE: RECAL ...`); o menu fecha |
+| **curto** | abre o menu na linha de baixo (`RECALIBRAR: POSTURA`); cada novo clique alterna **POSTURA → WIFI CONECTAR**. Antes da primeira calibração da postura aparece `CALIBRAR: POSTURA` |
+| **longo** (≥ 1 s) | **executa a opção mostrada** (enquanto segura: `SOLTE: RECAL POSTURA` / `SOLTE: WIFI CONECTAR`); o menu fecha |
 | sem clique por 5 s | o menu fecha sozinho (`MENU_B1_TIMEOUT_S`) e a linha de baixo volta a mostrar a postura |
-| longo com o menu fechado | ignorado (aperto longo sem querer não recalibra nada) |
-| qualquer aperto durante a recalibração da voz | ignorado |
+| longo com o menu fechado | ignorado (aperto longo sem querer não faz nada) |
+| **curto na tela de espera do Wi-Fi** | cancela e volta à tela inicial |
 
-- **Postura:** o pedido vai pro serviço (`postura recalibrar`) e a própria linha de baixo mostra as mensagens do serviço (`AJEITE-SE! 7s`, `CALIBRANDO...`...).
-- **Voz:** grava 2 vezes 3 s de "AAAA" e salva a baseline (reaproveita o `sensor-voz/main.py`). Mensagens: `VOZ 1/2: PREPARE-SE` (2 s) → `VOZ 1/2: FALE AAAA` → `VOZ 1/2: ANALISANDO` → idem 2/2 → `VOZ CALIBRADA` (ou `VOZ FALHOU` / `SEM MIC/PRAAT`, que somem após 3 s). Deixa o ambiente silencioso e a mesma posição do mic de sempre: baseline de um ambiente não vale pra outro.
-- Isso só **recalibra** a voz. Como a **medição** normal da voz é disparada ainda está em aberto.
+- **Postura:** o pedido vai pro serviço (`postura recalibrar`) e a própria linha de baixo mostra as mensagens do serviço (`COMEÇANDO EM: 7s`, `CALIBRANDO...`...), com os 3 pontos do enquadramento.
+- **Wi-Fi:** ver a seção abaixo.
+- A **voz** saiu do menu em 19/11 (fora do escopo do TCC).
+
+### Wi-Fi (T7)
+
+O Pi entra numa rede **que o usuário cria** (ex.: hotspot do celular). Rede padrão: **`DIHMO`**,
+senha **`admin1234`** (fraca de propósito, pra ser fácil). Pra trocar, por SSH ou no terminal do Pi:
+
+```bash
+wifi                                   # mostra a rede configurada
+wifi --ssid MinhaRede --senha 12345678 # troca (grava e atualiza o perfil do NetworkManager)
+```
+
+No Pi: **B1 curto** até `WIFI CONECTAR` e **segure**. A tela cheia mostra:
+
+- **Espera** (não fecha sozinha): `CONECTANDO...` animado, `REDE:`, `SENHA:` e `BANDA: 2.4 GHZ`
+  (o Pi 3B só tem Wi-Fi 2.4 GHz: no iPhone 12+ ligue "Maximizar Compatibilidade"; no Android fixe 2.4 GHz).
+  Enquanto isso o Pi repete `nmcli device wifi rescan` + `nmcli connection up tcc-wifi` a cada
+  10 s, por até 120 s (o hotspot costuma ser criado **depois** de ler a senha). `CLIQUE: CANCELAR`.
+- **Resultado** (3 s, depois volta à tela inicial): ícone com ✓ `WIFI CONECTADO` ou ✗ `WIFI FALHOU`, e o
+  nome da rede. Conectado = perfil ativo no `wlan0` com endereço IPv4.
+- **Já conectado na rede configurada:** mostra `WIFI CONECTADO` direto, **sem desconectar**.
+- **Com SSH ativo e o Wi-Fi noutra rede:** trocar de rede derruba o SSH, então a primeira vez só mostra
+  `SSH ATIVO: REPITA` e reabre o menu em `WIFI CONECTAR`; segurar de novo em até 5 s confirma.
+- Durante as telas cheias o B2 não age (o pomodoro continua contando por baixo); o B3 aparece por cima.
+
+Detalhes:
+- **Fonte da verdade:** `~/.config/pomodoro/wifi.json` (permissão 600; outro caminho por `POMODORO_WIFI`). Sem ele,
+  vale a padrão. O perfil no NetworkManager se chama `tcc-wifi` (WPA2-PSK, `autoconnect-priority -10`, abaixo
+  das redes que você já usa pra desenvolver). O `instalar.sh` cria o perfil.
+- **Validação do comando:** SSID de 1 a 32 caracteres, senha de 8 a 63 (ASCII) e, além disso, **rede e senha
+  têm que caber na tela** (`REDE:  ` + nome ≤ 127 px na fonte da tela). Em vez de cortar com `~`, o comando
+  recusa e diz quantos caracteres cabem (texto comum: ~14 na rede e ~13 na senha; só `W`: 9 e 8).
+- **Permissão:** o serviço roda como usuário normal. Se o NetworkManager negar (`nmcli general permissions`), o
+  código tenta `sudo -n nmcli` (igual ao `sudo -n poweroff` do B3).
 
 ### B3: desligar o Pi
 
@@ -154,8 +187,9 @@ pomodoro remover --preset 50/10       # o pré-configurado não sai
 | `diagnostico_botoes.py` | Mostra as bordas cruas dos pinos no Pi (repique × ruído × polaridade) |
 | `display.py` | Desenho da tela + backends (OLED, emulador pygame, PNG) |
 | `postura_cliente.py` | Consulta o `postura_servico.py` pelo socket Unix (sem mexer na câmera) |
-| `recalibracao.py` | Menu do B1 (postura ↔ voz; lógica pura) |
-| `voz_cliente.py` | Recalibração da voz em thread, reaproveitando `sensor-voz/main.py` |
+| `recalibracao.py` | Menu do B1 (postura → Wi-Fi; lógica pura) |
+| `wifi.py` | Wi-Fi: rede configurada, validação (WPA2 + cabe na tela), `nmcli` e a conexão em thread |
+| `wifi_ctl.py` | O comando `wifi` (`wifi --ssid X --senha Y`) |
 | `presets.py` | Presets: o pré-configurado + os do usuário (JSON), validação de `MM/MM[/MM]` |
 | `pomodoro_ctl.py` | O comando `pomodoro` (`listar`, `adicionar --preset`, `remover --preset`) |
 | `pomodoro_config.py` | **Preset de fábrica, pinos, polaridade e filtro dos botões, limites de aperto, endereço do OLED** |
@@ -171,7 +205,7 @@ python -m unittest -v        # testes (de dentro da pasta pomodoro/)
 # Tela vira um PNG (/tmp/pomodoro_tela.png) e os botões viram teclado:
 python main.py --display png --botoes teclado
 #   digite:  1c = B1 curto | 1l = B1 longo | 2c = B2 curto | 2l = B2 longo | 2m = B2 muito longo | 3m = B3 (só simula o desligar) | q = sair
-# Pra testar o B1 da voz sem mic nem Praat, acrescente --voz simulada
+# No notebook sem NetworkManager, o WIFI CONECTAR mostra WIFI FALHOU (sem nmcli)
 
 # Demo acelerada (1 s real = 1 min): bom pra ver a troca de fase e a pausa longa
 python main.py --display png --botoes teclado --velocidade 60
@@ -188,10 +222,6 @@ pip install -r req.txt
 sudo raspi-config            # Interface Options → I2C (já ativado se o i2cdetect mostrou 3c)
 python main.py               # OLED + botões de verdade
 ```
-
-Pra recalibrar a **voz** pelo B1 o venv também precisa das dependências do `sensor-voz`
-(`pip install -r ../sensor-voz/req.txt`), mais `sudo apt install praat libportaudio2` (o
-`sounddevice` não importa sem a PortAudio). Sem isso a tela mostra `SEM MIC/PRAAT`.
 
 Se o `pip install` do `gpiozero`/`lgpio` falhar nesse venv (Python 3.11 compilado),
 anote a mensagem de erro: ainda não foi testado nesse ambiente.
@@ -212,6 +242,12 @@ Depois `python main.py` e confira no log a polaridade descoberta de cada botão.
   cai na fonte padrão, os acentos somem e o layout muda; o `instalar.sh` avisa
   (`sudo apt install fonts-dejavu-core`). Alguns textos antigos seguem sem acento (`CALIBRACAO FALHOU`).
 - Se o serviço de postura já estiver calibrando, ele recusa o pedido do B1 (não faz nada).
-- A calibração da voz grava `sensor-voz/baseline_voz.json`, que **não é versionado** (`.gitignore`): cada máquina/mic tem a sua. Sem ele o menu do B1 mostra `CALIBRAR: VOZ`. Se o Pi já tinha o arquivo vindo do repo, o `git pull` apaga a cópia (aí é só calibrar de novo).
 - Menu do B1 com fechamento em 5 s, o limiar de 1 s do "longo", o de 3 s do desligar e o filtro de 40 ms são escolhas do projeto, sem validação própria.
-- A recalibração da voz pelo B1 foi testada só com a voz simulada e testes automáticos; mic e Praat reais ainda não.
+- **Wi-Fi: nada testado no Pi** (só com `nmcli` falso nos testes). A testar: permissão do usuário do serviço
+  (`nmcli general permissions`), tempo até conectar após o botão e após o boot, se o `rescan` + `up` repetido
+  ajuda de fato, senha errada sem tela, `raspberrypi.local` no hotspot do celular, power save do Wi-Fi.
+- Timeout de 120 s, intervalo de 10 s, prioridade -10 e resultado por 3 s: escolhas do projeto, sem validação.
+- Senha padrão fraca de propósito: enquanto o usuário não troca com `wifi --ssid X --senha Y`, qualquer rede
+  `DIHMO` com essa senha atrai o Pi. A senha digitada no comando fica no histórico do shell.
+- O pedido do Wi-Fi confere a rede atual e o SSH na hora do aperto (chamadas rápidas ao `nmcli`/`ss`; se
+  travarem, a tela congela até o timeout delas: até 8 s no pior caso).
