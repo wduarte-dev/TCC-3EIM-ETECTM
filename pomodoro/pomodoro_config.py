@@ -20,7 +20,7 @@ CICLOS_ATE_PAUSA_LONGA = 4   # a cada N focos concluídos, a pausa é a longa
 
 # --- Botões: 3 MÓDULOS de 3 pinos (VCC, OUT, GND), BCM ---
 # VCC dos 3 no pino 17 (3,3 V) e GND dos 3 no pino 9 (ver claude/hardware.md).
-GPIO_B1 = 17   # pino 11 → recalibrar (postura ou voz)
+GPIO_B1 = 17   # pino 11 → menu: recalibrar postura / conectar Wi-Fi
 GPIO_B2 = 27   # pino 13 → pomodoro
 GPIO_B3 = 22   # pino 15 → desligar o Pi (aperto de 3 s; ver energia.py)
 
@@ -83,10 +83,3 @@ WIFI_TIMEOUT_S = 120         # desiste depois disso (escolha do projeto, sem val
 WIFI_INTERVALO_S = 10        # repete rescan + connection up a cada X s (escolha do projeto)
 WIFI_RESULTADO_S = 3.0       # quanto tempo WIFI CONECTADO/FALHOU fica na tela
 WIFI_CONFIRMA_SSH_S = 5.0    # com SSH ativo, repetir o longo dentro desse tempo pra confirmar
-
-# --- Recalibração da voz (voz fora do escopo desde 19/11; sai no PR "voz fora do escopo") ---
-CAMINHO_SENSOR_VOZ = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                  "..", "sensor-voz", "main.py")
-CAMINHO_BASELINE_VOZ = os.path.join(os.path.dirname(CAMINHO_SENSOR_VOZ), "baseline_voz.json")
-PREPARO_VOZ_S = 2.0
-MENSAGEM_FINAL_VOZ_S = 3.0

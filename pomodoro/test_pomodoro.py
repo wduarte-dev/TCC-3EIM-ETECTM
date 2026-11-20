@@ -24,7 +24,6 @@ import energia
 from energia import Desligamento, montar_comando, rodar_comando
 from diagnostico_botoes import resumir
 from recalibracao import MenuB1, POSTURA, WIFI, ACAO_RECALIBRAR
-from voz_cliente import RecalibradorVoz
 
 PRESETS = [
     {"nome": "A", "foco": 2, "pausa": 1, "pausa_longa": 3},
@@ -547,67 +546,6 @@ class TesteWifi(unittest.TestCase):
             self.assertIn("Nada foi gravado", str(erro.exception))
 
 
-class FakeSensorVoz:
-    """Faz o papel do sensor-voz/main.py: chama o ao_progredir como o real."""
-    def __init__(self, erro=None):
-        self.erro = erro
-        self.chamadas = []
-
-    def calibrar_baseline(self, esperar_enter=True, ao_progredir=None):
-        self.chamadas.append(esperar_enter)
-        for i in (1, 2):
-            ao_progredir("gravando", i, 2)
-            ao_progredir("analisando", i, 2)
-        if self.erro:
-            raise self.erro
-
-
-class TesteRecalibradorVoz(unittest.TestCase):
-    def _rodar(self, sensor=None, carregar=None):
-        mensagens = []
-        r = RecalibradorVoz(carregar=carregar or (lambda: sensor), preparo_s=0, final_s=0,
-                            dormir=lambda s: mensagens.append(r.mensagem))
-        with contextlib.redirect_stderr(io.StringIO()):   # esconde os tracebacks esperados
-            t = r.iniciar()
-            t.join(timeout=5)
-        return r, mensagens
-
-    def test_sequencia_de_mensagens_padrao(self):
-        sensor = FakeSensorVoz()
-        r, vistas = self._rodar(sensor)
-        self.assertEqual(vistas, ["VOZ 1/2: PREPARE-SE", "VOZ 2/2: PREPARE-SE", "VOZ CALIBRADA"])
-        self.assertEqual(sensor.chamadas, [False])      # sem esperar ENTER (não há teclado)
-        self.assertFalse(r.ocupado)
-        self.assertIsNone(r.mensagem)
-
-    def test_falha_mostra_mensagem_e_libera(self):
-        r, vistas = self._rodar(FakeSensorVoz(erro=RuntimeError("sem voz")))
-        self.assertEqual(vistas[-1], "VOZ FALHOU")
-        self.assertFalse(r.ocupado)
-
-    def test_sem_biblioteca_ou_praat(self):
-        for erro in (ImportError("sounddevice"), FileNotFoundError("praat"), OSError("PortAudio library not found")):
-            r, vistas = self._rodar(FakeSensorVoz(erro=erro))
-            self.assertEqual(vistas[-1], "SEM MIC/PRAAT")
-        def carregar():
-            raise ImportError("sounddevice")
-        r, vistas = self._rodar(carregar=carregar)
-        self.assertEqual(vistas[-1], "SEM MIC/PRAAT")
-
-    def test_segundo_pedido_enquanto_roda_e_ignorado(self):
-        liberar = threading.Event()
-        class Lento:
-            def calibrar_baseline(self, esperar_enter=True, ao_progredir=None):
-                liberar.wait(5)
-        r = RecalibradorVoz(carregar=lambda: Lento(), preparo_s=0, final_s=0, dormir=lambda s: None)
-        t = r.iniciar()
-        self.assertTrue(r.ocupado)
-        self.assertIsNone(r.iniciar())
-        liberar.set()
-        t.join(timeout=5)
-        self.assertFalse(r.ocupado)
-
-
 class TesteClassificacao(unittest.TestCase):
     def test_limites(self):
         self.assertEqual(classificar(0.1), CURTO)
@@ -673,13 +611,11 @@ class TesteTela(unittest.TestCase):
             self.assertEqual(img.mode, "1")
             self.assertGreater(len(set(img.tobytes())), 1)                          # não é tela em branco
 
-    def test_textos_do_b1_e_da_voz_cabem_na_tela(self):
+    def test_textos_do_b1_cabem_na_tela(self):
         from PIL import ImageFont
         fonte = self.display._fonte(9)
         textos = ["RECALIBRAR: POSTURA", "SOLTE: RECAL POSTURA", "CALIBRAR: POSTURA", "SOLTE: CALIB POSTURA",
-                  "WIFI CONECTAR", "SOLTE: WIFI CONECTAR", "SSH ATIVO: REPITA", "RECALIBRAR: VOZ", "SOLTE: RECAL VOZ",
-                  "VOZ 1/2: PREPARE-SE", "VOZ 1/2: FALE AAAA", "VOZ 2/2: ANALISANDO",
-                  "VOZ CALIBRADA", "VOZ FALHOU", "SEM MIC/PRAAT", "VOZ: INICIANDO"]
+                  "WIFI CONECTAR", "SOLTE: WIFI CONECTAR", "SSH ATIVO: REPITA"]
         for t in textos:
             self.assertLessEqual(fonte.getlength(t), 128, t)
 
