@@ -5,20 +5,22 @@ Ajuste os valores AQUI: os outros arquivos leem deste mesmo lugar.
 """
 import os
 
-# --- Presets (nome, foco, pausa, pausa longa), tudo em MINUTOS ---
-# 25/5 é o padrão da técnica Pomodoro. 50/10 e 90/20 são variações populares;
-# os tempos da pausa longa são escolha do projeto (sem validação própria).
-PRESETS = [
-    {"nome": "25/5",  "foco": 25, "pausa": 5,  "pausa_longa": 15},
-    {"nome": "50/10", "foco": 50, "pausa": 10, "pausa_longa": 20},
-    {"nome": "90/20", "foco": 90, "pausa": 20, "pausa_longa": 30},
-]
+# --- Presets (T6), tudo em MINUTOS ---
+# Um só vem de fábrica: 25/5 com pausa longa de 15. O 25/5 é o padrão da técnica
+# Pomodoro; os 15 min da pausa longa são escolha do projeto (sem validação própria).
+# O usuário adiciona os dele com o comando `pomodoro adicionar --preset MM/MM[/MM]`
+# (ver presets.py); ficam num JSON fora do repositório.
+PRESET_PADRAO = {"nome": "25/5", "foco": 25, "pausa": 5, "pausa_longa": 15}
+PRESETS = [PRESET_PADRAO]      # só o de fábrica (o main.py junta os do usuário)
+CAMINHO_PRESETS = os.environ.get("POMODORO_PRESETS") or os.path.join(
+    os.path.expanduser("~"), ".config", "pomodoro", "presets.json")
+MINUTOS_MIN, MINUTOS_MAX = 1, 180   # faixa aceita no comando (escolha do projeto, sem fonte)
 
 CICLOS_ATE_PAUSA_LONGA = 4   # a cada N focos concluídos, a pausa é a longa
 
 # --- Botões: 3 MÓDULOS de 3 pinos (VCC, OUT, GND), BCM ---
 # VCC dos 3 no pino 17 (3,3 V) e GND dos 3 no pino 9 (ver claude/hardware.md).
-GPIO_B1 = 17   # pino 11 → recalibrar (postura ou voz)
+GPIO_B1 = 17   # pino 11 → menu: recalibrar postura / conectar Wi-Fi
 GPIO_B2 = 27   # pino 13 → pomodoro
 GPIO_B3 = 22   # pino 15 → desligar o Pi (aperto de 3 s; ver energia.py)
 
@@ -48,7 +50,8 @@ LIMITE_MUITO_LONGO_S = 3.0   # a partir daqui = muito longo (no B3, desliga o Pi
 # --- B3: desligar o Pi ---
 # "sudo -n": não pede senha (falha na hora se precisar de uma). Como root, sem sudo.
 COMANDO_DESLIGAR = ["sudo", "-n", "poweroff"]
-B3_DICA_APOS_S = 0.5         # só mostra a dica de "segure" depois disso (toque rápido não pisca)
+B3_DICA_APOS_S = 0.5         # segurando: a contagem "SEGURE Ns" aparece depois disso
+B3_DICA_CLIQUE_S = 2.0       # clique curto no B3: mostra "SEGURE 3s: DESLIGAR" por esse tempo
 MENSAGEM_FALHA_DESLIGAR_S = 3.0
 
 # --- Display OLED SSD1306 128x64 (I2C) ---
@@ -63,12 +66,20 @@ CAMINHO_SOCKET_POSTURA = f"/tmp/postura-{os.getuid()}.sock"
 INTERVALO_CONSULTA_POSTURA_S = 1.0
 TIMEOUT_POSTURA_S = 1.5
 
-# --- B1: menu de recalibração (postura/voz) ---
+# --- B1: menu (postura / Wi-Fi) ---
 MENU_B1_TIMEOUT_S = 5.0      # sem clique por esse tempo, o menu fecha sozinho
 
-# --- Recalibração da voz pelo B1 (reaproveita o sensor-voz/main.py) ---
-CAMINHO_SENSOR_VOZ = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                  "..", "sensor-voz", "main.py")
-CAMINHO_BASELINE_VOZ = os.path.join(os.path.dirname(CAMINHO_SENSOR_VOZ), "baseline_voz.json")
-PREPARO_VOZ_S = 2.0          # "PREPARE-SE" antes de cada gravação de 3 s
-MENSAGEM_FINAL_VOZ_S = 3.0   # quanto tempo "VOZ CALIBRADA/FALHOU" fica na tela
+# --- Wi-Fi (T7; ver wifi.py) ---
+# Rede padrão: fraca DE PROPÓSITO (fácil de criar no hotspot do celular). Enquanto o usuário
+# não troca com `wifi --ssid X --senha Y`, qualquer rede DIHMO com essa senha atrai o Pi.
+WIFI_SSID_PADRAO = "DIHMO"
+WIFI_SENHA_PADRAO = "admin1234"
+CAMINHO_WIFI = os.environ.get("POMODORO_WIFI") or os.path.join(
+    os.path.expanduser("~"), ".config", "pomodoro", "wifi.json")
+WIFI_PERFIL_NM = "tcc-wifi"  # nome do perfil no NetworkManager
+WIFI_INTERFACE = "wlan0"
+WIFI_PRIORIDADE = -10        # autoconnect um pouco abaixo das redes de desenvolvimento (padrão 0)
+WIFI_TIMEOUT_S = 120         # desiste depois disso (escolha do projeto, sem validação)
+WIFI_INTERVALO_S = 10        # repete rescan + connection up a cada X s (escolha do projeto)
+WIFI_RESULTADO_S = 3.0       # quanto tempo WIFI CONECTADO/FALHOU fica na tela
+WIFI_CONFIRMA_SSH_S = 5.0    # com SSH ativo, repetir o longo dentro desse tempo pra confirmar

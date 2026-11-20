@@ -17,6 +17,8 @@ DIR_BASE = os.path.dirname(os.path.realpath(__file__))
 CAMINHO_MODELO = os.path.join(DIR_BASE, "movenet_lightning.tflite")
 DIR_VIDEOS = os.path.join(DIR_BASE, "videos")
 DIR_LOGS = os.path.join(DIR_BASE, "logs")
+DIR_FOTOS = os.path.join(DIR_BASE, "fotos")   # `postura foto` (T5); não vai pro Git
+FOTO_LARGURA = 320                             # JPEG reduzido: leve pra baixar por scp
 
 # Última baseline calibrada ao vivo. Só é reaproveitada se o programa
 # reiniciar no MESMO boot (ex: travou e o systemd religou). Depois de um
@@ -45,7 +47,18 @@ LIMIAR_DESVIO_ANGULO = 12.0   # Graus de desvio lateral tolerados em relação �
 LIMIAR_QUEDA_RAZAO = 0.12     # Queda tolerada na razão pescoço/ombros (0.12 = 12%)
 DURACAO_CALIBRACAO = 5        # segundos coletando amostras da postura correta
 HISTORICO_TAMANHO = 5         # tamanho da média móvel
-FRAMES_PARA_ALERTA = 15       # frames seguidos de postura ruim até virar ALERTA
+FRAMES_PARA_ALERTA = 15       # ALERTA quando o contador de postura ruim PASSA disso (16º quadro)
+
+# --- Contador de ALERTA que usa as perdas de detecção (T3, "informative missingness") ---
+# Perder os pontos (SEM_USUARIO) no meio de uma sequência ruim é indício de que a pessoa
+# está encurvada no limite do que o MoveNet capta. Inferência por regras, não IA.
+# VALORES PROVISÓRIOS, escolha do projeto, a definir com os dados do estudo (rajadas de
+# SEM_USUARIO dentro de postura ruim). Origem:
+#   PERDAS_TOLERADAS: no simulador aprovado eram 2 com escala de 6 quadros (1/3); 1/3 de 15 = 5.
+#   MINIMO_RUINS_MEDIDOS: o ALERTA (16 quadros) não pode vir majoritariamente de quadros
+#   perdidos → pelo menos metade medida = 8.
+PERDAS_TOLERADAS = 5          # N: perdas SEGUIDAS que ainda contam como indício (em quadros)
+MINIMO_RUINS_MEDIDOS = 8      # M: quadros ruins MEDIDOS exigidos pra afirmar ALERTA
 
 # --- Comportamento headless ---
 CONTAGEM_CALIBRACAO = 10      # segundos pra se ajeitar depois do `postura recalibrar` (ao vivo)
