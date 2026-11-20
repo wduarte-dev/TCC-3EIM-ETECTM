@@ -8,7 +8,9 @@ pelo comando `postura`.
 
 | Arquivo | Função |
 |---|---|
-| `postura_servico.py` | O monitor em si: câmera/vídeo → MoveNet → cálculo de postura → status + log |
+| `postura_servico.py` | O monitor em si: câmera/vídeo → MoveNet → `postura_logica` → status + log |
+| `postura_logica.py` | **Decisão da postura, lógica pura** (ângulo, razão, média móvel, contador): recebe os 3 pontos + a baseline e devolve o estado. Não usa câmera nem OpenCV |
+| `test_postura_logica.py` | Testes com pontos sintéticos + prova de que a decisão é igual à do código antigo |
 | `postura_ctl.py` | O comando `postura` (status, recalibrar, gravar, janela...) |
 | `postura_config.py` | Limiares, tempos e caminhos. **Ajuste os valores aqui.** |
 | `instalar.sh` | Instala o serviço do systemd e o comando `postura` |
@@ -39,6 +41,20 @@ pelo comando `postura`.
    acabar, volta pra câmera ao vivo (aguardando calibração).
 6. **Reinício no mesmo boot** (travou e o systemd religou, ou `postura reiniciar`):
    reaproveita a última baseline. **Boot novo:** sempre aguarda calibração.
+
+## Testes (sem câmera)
+
+```bash
+python -m unittest -v        # de dentro de sensor-postura/; só precisa do Python
+```
+
+`test_postura_logica.py` testa ângulo, razão, limiares, média móvel e contador com pontos
+inventados (ex.: orelha girada 30°, pescoço 30% mais curto). O teste
+`TesteIgualAoCodigoAntigo` roda 300 sequências aleatórias de 300 quadros (com quadros sem
+detecção no meio) na lógica nova e numa cópia literal do trecho antigo do serviço e exige
+**resultado idêntico quadro a quadro**: é a prova de que a refatoração não mudou o comportamento.
+Os arquivos antigos `main.py` e `main-otimizado-rpi3b.py` continuam com a cópia própria dos
+cálculos (referência histórica, não são usados pelo serviço).
 
 ## Instalação no Raspberry Pi
 
