@@ -119,16 +119,29 @@ Foco → pausa → foco → ... sozinho, sem apertar nada. A cada 4 focos
 (`CICLOS_ATE_PAUSA_LONGA`) a pausa é a longa. Não há buzzer (decisão de projeto, ver
 `claude/00-visao-geral.md`): quando a fase troca, **a tela pisca por 3 s**.
 
-Presets (em `pomodoro_config.py`, é só editar a lista):
+### Presets (T6)
 
-| Preset | Foco | Pausa | Pausa longa |
-|---|---|---|---|
-| 25/5 | 25 min | 5 min | 15 min |
-| 50/10 | 50 min | 10 min | 20 min |
-| 90/20 | 90 min | 20 min | 30 min |
+Vem **um** pré-configurado: **25/5** (foco 25 min, pausa 5 min, pausa longa 15 min a cada 4 focos).
+O 25/5 é o padrão da técnica Pomodoro; os 15 min da pausa longa são escolha do projeto, **sem
+validação própria**. O usuário adiciona os dele pelo comando `pomodoro` (instalado pelo `instalar.sh`):
 
-O 25/5 é o padrão da técnica Pomodoro; os outros são variações populares e os
-tempos de pausa longa são escolha do projeto, **sem validação própria**.
+```bash
+pomodoro listar                       # o 1º (com *) é o pré-configurado
+pomodoro adicionar --preset 50/10     # FOCO/PAUSA em minutos: sem pausa longa
+pomodoro adicionar --preset 50/10/20  # o 3º número é a pausa longa
+pomodoro remover --preset 50/10       # o pré-configurado não sai
+```
+
+- Regras: minutos inteiros de **1 a 180**; pausa longa **≥ pausa**; sem duplicata (nem do
+  pré-configurado). Se algo não vale, o comando diz o porquê e **nada é gravado**.
+- **Sem o 3º número não há pausa longa:** foco e pausa se alternam sem fim e o topo mostra só a
+  fase (`FOCO`, sem o `1/4`).
+- Ficam em `~/.config/pomodoro/presets.json` (fora do repositório, o `git pull` não apaga; outro
+  caminho pela variável `POMODORO_PRESETS`). O serviço **recarrega sozinho** quando a tela de escolha
+  (`TEMPO`) está aberta, sem reiniciar.
+- Na escolha, nomes compridos (`50/10/20`) usam uma fonte menor pra caber.
+- No Windows: `python pomodoro_ctl.py listar` (não há o atalho `pomodoro`).
+- A faixa de 1 a 180 min é escolha do projeto, sem fonte.
 
 ## Arquivos
 
@@ -143,7 +156,9 @@ tempos de pausa longa são escolha do projeto, **sem validação própria**.
 | `postura_cliente.py` | Consulta o `postura_servico.py` pelo socket Unix (sem mexer na câmera) |
 | `recalibracao.py` | Menu do B1 (postura ↔ voz; lógica pura) |
 | `voz_cliente.py` | Recalibração da voz em thread, reaproveitando `sensor-voz/main.py` |
-| `pomodoro_config.py` | **Presets, pinos, polaridade e filtro dos botões, limites de aperto, endereço do OLED** |
+| `presets.py` | Presets: o pré-configurado + os do usuário (JSON), validação de `MM/MM[/MM]` |
+| `pomodoro_ctl.py` | O comando `pomodoro` (`listar`, `adicionar --preset`, `remover --preset`) |
+| `pomodoro_config.py` | **Preset de fábrica, pinos, polaridade e filtro dos botões, limites de aperto, endereço do OLED** |
 | `test_pomodoro.py` | Testes automáticos |
 | `instalar.sh` | Instala como serviço do systemd (inicia no boot) |
 
