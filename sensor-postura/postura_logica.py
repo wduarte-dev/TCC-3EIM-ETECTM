@@ -77,6 +77,31 @@ def calcular_baseline(amostras_angulo, amostras_razao, minimo=MINIMO_AMOSTRAS_CA
             sum(amostras_razao) / len(amostras_razao))
 
 
+# --- Enquadramento: quais dos 3 pontos o MoveNet está vendo (T2') ---
+# Nomes sem esquerda/direita: a imagem é espelhada e o "esquerdo" do MoveNet não é
+# garantido como o esquerdo da pessoa; pro usuário só importa qual ponto falta.
+PONTOS = ("orelha", "ombro_orelha", "outro_ombro")
+NOME_PONTO = {"orelha": "orelha", "ombro_orelha": "ombro do lado da orelha", "outro_ombro": "outro ombro"}
+
+
+def pontos_visiveis(confiancas, limiar):
+    """confiancas = (orelha, ombro do lado da orelha, outro ombro) → {nome: bool}.
+    Visível = confiança ACIMA do limiar (mesma regra que decide se o quadro vale)."""
+    return {nome: c > limiar for nome, c in zip(PONTOS, confiancas)}
+
+
+def descrever_falta(faltas, total):
+    """
+    faltas = {nome: nº de quadros em que o ponto não apareceu} durante a calibração.
+    Devolve o texto do ponto que mais faltou (empates: todos), ou None se nada faltou.
+    """
+    if total <= 0 or not faltas or max(faltas.values()) == 0:
+        return None
+    pior = max(faltas.values())
+    nomes = [NOME_PONTO[n] for n in PONTOS if faltas.get(n, 0) == pior]
+    return f"{' e '.join(nomes)} fora da imagem ({pior} de {total} quadros)"
+
+
 Avaliacao = namedtuple("Avaliacao", "status angulo razao desvio_angulo queda_razao")
 """Resultado de um quadro. angulo/razao já suavizados (média móvel); None em SEM_USUARIO."""
 

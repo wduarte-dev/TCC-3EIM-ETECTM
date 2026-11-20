@@ -70,7 +70,31 @@ def _texto_fase(pomo):
     }.get(pomo.estado, "")
 
 
-def desenhar(pomo, texto_postura, status_postura=None, segurando_tipo=None, piscando=False):
+# Enquadramento (T2'): mini-figura com os 3 pontos que a postura usa, no canto direito
+# da linha de baixo. Cheio = o MoveNet está vendo o ponto; vazado = não está.
+# A imagem da câmera é espelhada, então a orelha usada aparece sobre o ombro da DIREITA
+# de quem olha (inferência pela convenção do MoveNet, conferir no Pi; se sair trocado,
+# é só inverter X_OMBRO_ORELHA e X_OUTRO_OMBRO).
+X_OMBRO_ORELHA, X_OUTRO_OMBRO = 125, 117
+Y_ORELHA, Y_OMBROS, RAIO_PONTO = 54, 60, 2
+X_FIM_TEXTO_COM_PONTOS = 110       # texto da linha de baixo vai até aqui quando há figura
+
+
+def _ponto(d, x, y, cheio, cor=1):
+    caixa = (x - RAIO_PONTO, y - RAIO_PONTO, x + RAIO_PONTO, y + RAIO_PONTO)
+    d.ellipse(caixa, fill=cor if cheio else None, outline=cor)
+
+
+def _figura_pontos(d, pontos, cor=1):
+    """pontos = (orelha, ombro do lado da orelha, outro ombro) → bools."""
+    orelha, ombro_orelha, outro_ombro = pontos
+    _ponto(d, X_OMBRO_ORELHA, Y_ORELHA, orelha, cor)
+    _ponto(d, X_OMBRO_ORELHA, Y_OMBROS, ombro_orelha, cor)
+    _ponto(d, X_OUTRO_OMBRO, Y_OMBROS, outro_ombro, cor)
+
+
+def desenhar(pomo, texto_postura, status_postura=None, segurando_tipo=None, piscando=False,
+             pontos=None):
     """
     Devolve a imagem (modo '1', 128x64).
       pomo            instância de Pomodoro
@@ -78,6 +102,8 @@ def desenhar(pomo, texto_postura, status_postura=None, segurando_tipo=None, pisc
       status_postura  status bruto do serviço; "ALERTA" inverte a linha de baixo
       segurando_tipo  'longo'/'muito_longo' enquanto o B2 está segurado (mostra dica)
       piscando        True durante alguns segundos após trocar de fase (sem buzzer)
+      pontos          (orelha, ombro, outro ombro) visíveis? Desenha a mini-figura do
+                      enquadramento à direita da linha de baixo (None = sem figura)
     """
     img = Image.new("1", (LARGURA, ALTURA), 0)
     d = ImageDraw.Draw(img)
@@ -103,7 +129,11 @@ def desenhar(pomo, texto_postura, status_postura=None, segurando_tipo=None, pisc
         _texto(d, (LARGURA // 2, 53), texto_postura, 9, preenchimento=0, ancora="ma")
     else:
         d.line((0, 51, LARGURA - 1, 51), fill=1)
-        _texto(d, (LARGURA // 2, 53), texto_postura, 9, ancora="ma")
+        if pontos is not None:
+            _texto(d, (0, 53), texto_postura, 9)        # à esquerda, abrindo espaço pra figura
+            _figura_pontos(d, pontos)
+        else:
+            _texto(d, (LARGURA // 2, 53), texto_postura, 9, ancora="ma")
 
     if piscando:
         # via "L": o invert direto no modo "1" dá tela toda branca em algumas versões do Pillow

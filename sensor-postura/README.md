@@ -37,9 +37,15 @@ pelo comando `postura`.
      a razão não gera alerta.
 4. **Média móvel** de 5 leituras (tira a tremedeira) + **contador**: só vira
    ALERTA depois de 15 frames seguidos de postura ruim.
-5. **Nunca para sozinho:** se a câmera cair, reabre e mantém a baseline; se um vídeo
+5. **Enquadramento (quais pontos a câmera vê):** na contagem da calibração o MoveNet já roda,
+   e o status (`pontos_visiveis`) diz se a orelha, o ombro do lado dela e o outro ombro estão
+   visíveis (confiança > 0,4). O pomodoro desenha isso no OLED como 3 pontos (cheio/vazado), e o
+   `postura status` mostra `● orelha ○ outro ombro`... Se a calibração falhar, a mensagem diz
+   **qual ponto mais faltou** (ex.: `outro ombro fora da imagem (40 de 50 quadros)`). A baseline
+   já não usava quadros sem os 3 pontos; continua falhando com menos de 5 quadros válidos.
+6. **Nunca para sozinho:** se a câmera cair, reabre e mantém a baseline; se um vídeo
    acabar, volta pra câmera ao vivo (aguardando calibração).
-6. **Reinício no mesmo boot** (travou e o systemd religou, ou `postura reiniciar`):
+7. **Reinício no mesmo boot** (travou e o systemd religou, ou `postura reiniciar`):
    reaproveita a última baseline. **Boot novo:** sempre aguarda calibração.
 
 ## Testes (sem câmera)

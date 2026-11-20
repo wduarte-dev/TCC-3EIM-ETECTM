@@ -67,6 +67,22 @@ def texto_curto(estado):
     return status[:21] or "..."
 
 
+# Status em que a tela mostra a mini-figura dos 3 pontos (enquadramento, T2'):
+# a pessoa se ajeitando pra calibrar, calibrando, falhou, ou o sistema não acha ela.
+STATUS_COM_PONTOS = ("CONTAGEM", "CALIBRANDO", "CALIBRACAO_FALHOU", "SEM_USUARIO")
+ORDEM_PONTOS = ("orelha", "ombro_orelha", "outro_ombro")
+
+
+def pontos_enquadramento(estado):
+    """(orelha, ombro, outro ombro) visíveis, ou None quando a figura não deve aparecer."""
+    if not estado or estado.get("status") not in STATUS_COM_PONTOS:
+        return None
+    visiveis = estado.get("pontos_visiveis")
+    if not visiveis:
+        return None
+    return tuple(bool(visiveis.get(n)) for n in ORDEM_PONTOS)
+
+
 class MonitorPostura:
     """Thread que consulta o status de tempos em tempos (a tela nunca trava esperando o socket)."""
 

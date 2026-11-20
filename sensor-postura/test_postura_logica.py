@@ -162,6 +162,24 @@ class TesteDecisao(unittest.TestCase):
         self.assertAlmostEqual(r.angulo, 40.0, places=6)   # média de 20..60
 
 
+class TesteEnquadramento(unittest.TestCase):
+    def test_visivel_e_acima_do_limiar(self):
+        v = pl.pontos_visiveis((0.9, 0.4, 0.1), 0.4)
+        self.assertEqual(v, {"orelha": True, "ombro_orelha": False, "outro_ombro": False})
+
+    def test_descreve_o_ponto_que_mais_faltou(self):
+        texto = pl.descrever_falta({"orelha": 2, "ombro_orelha": 0, "outro_ombro": 40}, 50)
+        self.assertEqual(texto, "outro ombro fora da imagem (40 de 50 quadros)")
+
+    def test_empate_lista_os_dois(self):
+        texto = pl.descrever_falta({"orelha": 30, "ombro_orelha": 30, "outro_ombro": 0}, 50)
+        self.assertTrue(texto.startswith("orelha e ombro do lado da orelha"))
+
+    def test_nada_faltou(self):
+        self.assertIsNone(pl.descrever_falta({"orelha": 0, "ombro_orelha": 0, "outro_ombro": 0}, 50))
+        self.assertIsNone(pl.descrever_falta({}, 0))
+
+
 class TesteIgualAoCodigoAntigo(unittest.TestCase):
     """Prova do T1: mesma saída do código antigo em sequências aleatórias longas."""
 

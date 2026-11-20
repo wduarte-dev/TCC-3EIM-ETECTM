@@ -84,6 +84,20 @@ segurado, a tela mostra o que vai acontecer ao soltar (`SOLTE: PAUSAR`, `SOLTE: 
 
 Curto fora da escolha é ignorado de propósito: um toque sem querer não atrapalha o timer.
 
+## Enquadramento: os 3 pontos na tela
+
+O produto não tem SSH: quem usa só vê o display. Por isso, enquanto a pessoa se ajeita pra
+calibrar (`AJEITE-SE!`), durante a calibração, quando ela falha e quando o sistema não acha o
+usuário (`SEM USUARIO`), o canto direito da linha de baixo mostra uma **mini-figura com os 3
+pontos que a postura usa**: a orelha (em cima) e os dois ombros (embaixo). **Cheio** = a
+câmera está vendo o ponto; **vazado** = não está. A instrução pro usuário é uma só: **deixe os
+três pontos cheios** (ajuste a câmera, a cadeira ou a distância).
+
+- A informação vem do serviço de postura (`pontos_visiveis` no status, confiança acima de 0,4).
+- A orelha aparece sobre o ombro da **direita** de quem olha, porque a imagem é espelhada. Isso é
+  inferência pela convenção do MoveNet: **conferir no Pi** (se sair trocado, inverter
+  `X_OMBRO_ORELHA` e `X_OUTRO_OMBRO` no `display.py`).
+
 ## Como o ciclo funciona
 
 Foco → pausa → foco → ... sozinho, sem apertar nada. A cada 4 focos
