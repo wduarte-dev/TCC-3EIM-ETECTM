@@ -3,34 +3,34 @@
 Pomodoro com display OLED + 3 botões, ligado ao monitor de postura.
 
     No Pi (OLED e botões de verdade):      python main.py
-    No notebook (sem hardware):            python main.py --display png --botoes teclado --voz simulada
+    No notebook (sem hardware):            python main.py --display png --botoes teclado
     Demo acelerada (1 s real = 1 min):     python main.py --display png --botoes teclado --velocidade 60
 
 Botões:
     B1 (GPIO17)  RECALIBRAÇÃO (não mexe no pomodoro):
-                 curto alterna POSTURA ↔ VOZ, longo recalibra a opção mostrada
+                 curto alterna POSTURA → WIFI CONECTAR, longo executa a opção mostrada
+                 (na espera do Wi-Fi, clique curto cancela)
     B2 (GPIO27)  SELEÇÃO: curto troca o preset, longo inicia
                  rodando/pausado: curto pausa/retoma, longo volta pra seleção
     B3 (GPIO22)  DESLIGAR O PI: segure 3 s e solte (sudo poweroff); soltar antes cancela;
                  clique curto só mostra a dica por 2 s
 """
 import argparse
-import os
 import queue
 import signal
 import sys
 import time
 
 from pomodoro_config import (
-    ATUALIZACAO_TELA_S, PISCAR_MUDANCA_FASE_S, CAMINHO_BASELINE_VOZ,
+    ATUALIZACAO_TELA_S, PISCAR_MUDANCA_FASE_S,
     POLARIDADE_BOTOES, PULL_INTERNO_BOTOES,
 )
-from pomodoro_logica import Pomodoro, EV_FASE_MUDOU, LONGO, MUITO_LONGO, SELECAO
+from pomodoro_logica import Pomodoro, EV_FASE_MUDOU, CURTO, LONGO, MUITO_LONGO, SELECAO
 import presets
-from recalibracao import MenuB1, ACAO_RECALIBRAR, POSTURA, VOZ
+from recalibracao import MenuB1, POSTURA, WIFI
 from postura_cliente import MonitorPostura, texto_curto, pontos_enquadramento
-from voz_cliente import RecalibradorVoz, VozSimulada
-from display import criar_display, desenhar
+from wifi import WifiConectar
+from display import criar_display, desenhar, desenhar_wifi_espera, desenhar_wifi_resultado
 from energia import Desligamento, TEXTO_DESLIGANDO
 
 
@@ -43,8 +43,6 @@ def main():
                          "alto = sobe ao apertar; baixo = desce ao apertar")
     ap.add_argument("--pull", choices=["nenhum", "cima", "baixo"], default=PULL_INTERNO_BOTOES or "nenhum",
                     help="resistor interno do Pi no pino do OUT (o módulo já tem o dele: nenhum)")
-    ap.add_argument("--voz", choices=["real", "simulada"], default="real",
-                    help="simulada = recalibração de voz de mentira (sem mic/Praat), pra testar no notebook")
     ap.add_argument("--velocidade", type=float, default=1.0,
                     help="multiplica a passagem do tempo (60 = 1 s real vale 1 min; só pra demo/teste)")
     args = ap.parse_args()
@@ -74,7 +72,7 @@ def main():
                                                                flush=True) or True)
     else:
         desligamento = Desligamento()
-    voz = RecalibradorVoz(carregar=lambda: VozSimulada) if args.voz == "simulada" else RecalibradorVoz()
+    wifi = WifiConectar()
     rodando = {"sim": True}
 
     def encerrar(*_):
@@ -105,22 +103,27 @@ def main():
             elif origem == "B3":
                 desligamento.botao(tipo)
             elif origem == "B1":
-                menu.ocupado = voz.ocupado
+                if wifi.esperando:
+                    if tipo == CURTO:
+                        wifi.cancelar()          # clique curto na espera volta ao inicial
+                    continue
+                if wifi.ocupado:
+                    continue                     # resultado na tela: só espera sumir
                 acao = menu.botao(tipo)
                 if acao:
                     _, opcao = acao
                     if opcao == POSTURA:
                         monitor.recalibrar()
-                    else:
-                        voz.iniciar()
+                    elif opcao == WIFI and wifi.pedir() == "confirmar":
+                        menu.abrir_em(WIFI)      # SSH ativo: repetir o longo confirma
             elif origem == "B2":
-                eventos += pomo.botao(tipo)
+                if not wifi.ocupado:             # tela do Wi-Fi cobre o pomodoro: B2 não age escondido
+                    eventos += pomo.botao(tipo)
         eventos += pomo.tick(dt)
         # `pomodoro adicionar/remover` mexeu no arquivo: recarrega na tela de escolha
         if pomo.estado == SELECAO and presets.assinatura() != assinatura_presets:
             assinatura_presets = presets.assinatura()
             pomo.trocar_presets(presets.todos())
-        menu.ocupado = voz.ocupado
         menu.tick(dt_real)
 
         if EV_FASE_MUDOU in eventos:
@@ -131,13 +134,21 @@ def main():
             estado_postura = monitor.estado
             segurando = botoes.aperto_b2.tipo_se_soltar_agora()
             segurando_b1 = botoes.aperto_b1.tipo_se_soltar_agora() in (LONGO, MUITO_LONGO)
-            # Linha de baixo: B3/desligar > voz recalibrando > menu do B1 > postura
+            # Linha de baixo: B3/desligar > aviso do Wi-Fi (SSH) > menu do B1 > postura
             calibrado = {   # sem baseline/calibração ainda, o menu mostra CALIBRAR em vez de RECALIBRAR
                 POSTURA: (estado_postura or {}).get("status") != "AGUARDANDO_CALIBRACAO",
-                VOZ: os.path.isfile(CAMINHO_BASELINE_VOZ),
             }
-            texto_baixo = (desligamento.texto(botoes.aperto_b3.segurando_ha())
-                           or voz.mensagem or menu.texto(segurando_b1, calibrado))
+            texto_b3 = desligamento.texto(botoes.aperto_b3.segurando_ha())
+            texto_baixo = texto_b3 or wifi.mensagem() or menu.texto(segurando_b1, calibrado)
+            tela_wifi = None if texto_b3 else wifi.tela    # o B3 sempre aparece por cima
+            if tela_wifi and tela_wifi[0] == "espera":
+                tela.mostrar(desenhar_wifi_espera(*tela_wifi[1:]))
+                time.sleep(0.05)
+                continue
+            if tela_wifi:
+                tela.mostrar(desenhar_wifi_resultado(*tela_wifi[1:]))
+                time.sleep(0.05)
+                continue
             imagem = desenhar(
                 pomo,
                 texto_baixo or texto_curto(estado_postura),

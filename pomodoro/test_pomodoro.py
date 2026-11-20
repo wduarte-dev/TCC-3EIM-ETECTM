@@ -23,7 +23,7 @@ from botoes import (
 import energia
 from energia import Desligamento, montar_comando, rodar_comando
 from diagnostico_botoes import resumir
-from recalibracao import MenuB1, POSTURA, VOZ, ACAO_RECALIBRAR
+from recalibracao import MenuB1, POSTURA, WIFI, ACAO_RECALIBRAR
 from voz_cliente import RecalibradorVoz
 
 PRESETS = [
@@ -277,18 +277,18 @@ class TestePresets(unittest.TestCase):
 
 
 class TesteMenuB1(unittest.TestCase):
-    def test_curto_abre_em_postura_e_alterna_com_voz(self):
+    def test_curto_abre_em_postura_e_alterna_com_wifi(self):
         m = MenuB1(timeout_s=5)
         self.assertFalse(m.aberto)
         self.assertIsNone(m.botao(CURTO))
         self.assertEqual(m.opcao, POSTURA)
         m.botao(CURTO)
-        self.assertEqual(m.opcao, VOZ)
+        self.assertEqual(m.opcao, WIFI)
         m.botao(CURTO)
         self.assertEqual(m.opcao, POSTURA)
 
     def test_longo_executa_a_opcao_mostrada_e_fecha_o_menu(self):
-        for cliques, esperada in ((1, POSTURA), (2, VOZ)):
+        for cliques, esperada in ((1, POSTURA), (2, WIFI)):
             m = MenuB1(timeout_s=5)
             for _ in range(cliques):
                 m.botao(CURTO)
@@ -342,13 +342,10 @@ class TesteMenuB1(unittest.TestCase):
     def test_calibrar_antes_da_primeira_vez_e_recalibrar_depois(self):
         m = MenuB1()
         m.botao(CURTO)
-        nada = {POSTURA: False, VOZ: False}
+        nada = {POSTURA: False}
         self.assertEqual(m.texto(calibrado=nada), "CALIBRAR: POSTURA")
         self.assertEqual(m.texto(True, nada), "SOLTE: CALIB POSTURA")
-        self.assertEqual(m.texto(calibrado={POSTURA: True, VOZ: False}), "RECALIBRAR: POSTURA")
-        m.botao(CURTO)                                   # VOZ, só ela sem baseline
-        self.assertEqual(m.texto(calibrado={POSTURA: True, VOZ: False}), "CALIBRAR: VOZ")
-        self.assertEqual(m.texto(calibrado={POSTURA: False, VOZ: True}), "RECALIBRAR: VOZ")
+        self.assertEqual(m.texto(calibrado={POSTURA: True}), "RECALIBRAR: POSTURA")
 
     def test_textos(self):
         m = MenuB1()
@@ -356,7 +353,198 @@ class TesteMenuB1(unittest.TestCase):
         self.assertEqual(m.texto(), "RECALIBRAR: POSTURA")
         self.assertEqual(m.texto(segurando_longo=True), "SOLTE: RECAL POSTURA")
         m.botao(CURTO)
-        self.assertEqual(m.texto(), "RECALIBRAR: VOZ")
+        self.assertEqual(m.texto(), "WIFI CONECTAR")
+        self.assertEqual(m.texto(segurando_longo=True), "SOLTE: WIFI CONECTAR")
+
+    def test_abrir_em_reabre_na_opcao(self):
+        m = MenuB1(timeout_s=5)
+        m.abrir_em(WIFI)
+        self.assertEqual(m.opcao, WIFI)
+        self.assertEqual(m.botao(LONGO), (ACAO_RECALIBRAR, WIFI))
+
+
+class NmFalso:
+    """Faz o papel do nmcli: responde por comando e registra o que foi chamado."""
+    def __init__(self, ativo="", ip=False, perfil=None, sobe_na_tentativa=1, ssh=False):
+        self.ativo, self.ip, self.perfil = ativo, ip, perfil
+        self.sobe_na_tentativa, self.ssh = sobe_na_tentativa, ssh
+        self.tentativas = 0
+        self.chamadas = []
+
+    def __call__(self, comando, timeout=10, cancelado=None):
+        self.chamadas.append(comando)
+        if comando[0] == "ss":
+            return 0, "ESTAB 0 0 10.0.0.2:22 10.0.0.9:5000\n" if self.ssh else ""
+        if comando[:2] == ["nmcli", "-g"] and comando[2].startswith("GENERAL"):
+            return 0, f"{self.ativo}\n{'192.168.43.20/24' if self.ip else ''}\n"
+        if comando[:2] == ["nmcli", "-g"]:
+            return (0, self.perfil + "\n") if self.perfil is not None else (10, "Error: no such connection")
+        if "add" in comando or "modify" in comando:
+            self.perfil = comando[comando.index("ssid") + 1] if "ssid" in comando else \
+                comando[comando.index("802-11-wireless.ssid") + 1]
+            return 0, ""
+        if "up" in comando:
+            self.tentativas += 1
+            if self.tentativas >= self.sobe_na_tentativa:
+                self.ativo, self.ip = "tcc-wifi", True
+                return 0, ""
+            return 4, "Error: no network with SSID"
+        return 0, ""
+
+
+class TesteWifi(unittest.TestCase):
+    def setUp(self):
+        import wifi
+        self.wifi = wifi
+        self.t = [0.0]
+
+    def _novo(self, nm, **kw):
+        kw.setdefault("intervalo_s", 0.01)
+        kw.setdefault("timeout_s", 5)
+        return self.wifi.WifiConectar(executar=nm, relogio=lambda: self.t[0], tem_nm=lambda: True,
+                                      carregar_rede=lambda: ("DIHMO", "admin1234", False), **kw)
+
+    def _esperar_fim(self, w):
+        for _ in range(400):
+            if w.tela is None or w.tela[0] == "resultado":
+                return
+            threading.Event().wait(0.005)
+
+    def test_padrao_sem_arquivo(self):
+        arq = os.path.join(tempfile.mkdtemp(), "wifi.json")
+        self.assertEqual(self.wifi.carregar(arq), ("DIHMO", "admin1234", False))
+
+    def test_salvar_e_carregar(self):
+        arq = os.path.join(tempfile.mkdtemp(), "x", "wifi.json")
+        self.wifi.salvar("Casa", "senha1234", arq)
+        self.assertEqual(self.wifi.carregar(arq), ("Casa", "senha1234", True))
+        if os.name != "nt":
+            self.assertEqual(os.stat(arq).st_mode & 0o777, 0o600)     # tem senha: só o dono
+
+    def test_validacao_wpa2(self):
+        v = lambda s, p: self.wifi.validar(s, p, medir=len)            # medir por letra só pra isolar a regra
+        for ssid, senha in (("", "12345678"), ("x" * 33, "12345678"), ("Casa", "1234567"),
+                            ("Casa", "x" * 64), ("Casa", "senhaçãoo")):
+            with self.assertRaises(self.wifi.WifiInvalido, msg=(ssid, senha)):
+                self.wifi.validar(ssid, senha, medir=lambda t: 0)
+        v("Casa", "12345678")
+
+    def test_recusa_o_que_nao_cabe_na_tela_e_diz_o_maximo(self):
+        try:
+            import display  # noqa: F401
+        except ImportError:
+            self.skipTest("Pillow não instalado")
+        self.wifi.validar("DIHMO", "admin1234")                       # padrão cabe com folga
+        with self.assertRaises(self.wifi.WifiInvalido) as erro:
+            self.wifi.validar("MinhaRedeDeCasaMuitoLonga", "admin1234")
+        self.assertIn("cabem só", str(erro.exception))
+        with self.assertRaises(self.wifi.WifiInvalido):
+            self.wifi.validar("Casa", "WWWWWWWWWWWW")                   # só W: pior caso
+
+    def test_conecta_na_segunda_tentativa(self):
+        nm = NmFalso(sobe_na_tentativa=2)
+        w = self._novo(nm)
+        self.assertEqual(w.pedir(), "iniciou")
+        self.assertEqual(w.tela[0], "espera")
+        self.assertEqual(w.tela[1:3], ("DIHMO", "admin1234"))
+        self._esperar_fim(w)
+        self.assertEqual(w.tela, ("resultado", True, "DIHMO"))
+        self.assertEqual(nm.tentativas, 2)
+        self.assertTrue(any("rescan" in c for c in nm.chamadas))
+        self.t[0] += 3.1                                                 # some depois de 3 s
+        self.assertIsNone(w.tela)
+
+    def test_ja_conectado_nao_desconecta(self):
+        nm = NmFalso(ativo="tcc-wifi", ip=True, perfil="DIHMO")
+        w = self._novo(nm)
+        w.pedir()
+        self._esperar_fim(w)
+        self.assertEqual(w.tela, ("resultado", True, "DIHMO"))
+        self.assertFalse(any("up" in c for c in nm.chamadas))
+
+    def test_falha_por_tempo(self):
+        nm = NmFalso(sobe_na_tentativa=10**6)
+        relogio = {"t": 0.0}
+        def tempo():
+            relogio["t"] += 1.0               # cada leitura do relógio "passa" 1 s
+            return relogio["t"]
+        w = self.wifi.WifiConectar(executar=nm, relogio=tempo, tem_nm=lambda: True,
+                                   carregar_rede=lambda: ("DIHMO", "admin1234", False),
+                                   timeout_s=20, intervalo_s=0.0, resultado_s=10**6)
+        w.pedir()
+        for _ in range(400):
+            if w._fase == "resultado":
+                break
+            threading.Event().wait(0.005)
+        self.assertEqual(w._fase, "resultado")
+        self.assertFalse(w._ok)
+
+    def test_sem_nmcli_falha(self):
+        w = self.wifi.WifiConectar(executar=NmFalso(), relogio=lambda: self.t[0], tem_nm=lambda: False,
+                                   carregar_rede=lambda: ("DIHMO", "admin1234", False))
+        w.pedir()
+        self._esperar_fim(w)
+        self.assertEqual(w.tela, ("resultado", False, "DIHMO"))
+
+    def test_cancelar_volta_ao_normal(self):
+        nm = NmFalso(sobe_na_tentativa=10**6)
+        w = self._novo(nm, intervalo_s=60, timeout_s=600)
+        w.pedir()
+        self.assertTrue(w.esperando)
+        w.cancelar()
+        self.assertIsNone(w.tela)
+        self.assertFalse(w.ocupado)
+
+    def test_ssh_ativo_noutra_rede_pede_confirmacao(self):
+        nm = NmFalso(ativo="casa", ip=True, perfil="DIHMO", ssh=True)
+        w = self._novo(nm)
+        self.assertEqual(w.pedir(), "confirmar")
+        self.assertEqual(w.mensagem(), "SSH ATIVO: REPITA")
+        self.assertIsNone(w.tela)
+        self.assertEqual(w.pedir(), "iniciou")                         # repetiu dentro de 5 s
+        self._esperar_fim(w)
+        self.assertIsNone(w.mensagem())
+
+    def test_ssh_confirmacao_expira(self):
+        nm = NmFalso(ativo="casa", ip=True, perfil="DIHMO", ssh=True)
+        w = self._novo(nm)
+        w.pedir()
+        self.t[0] += 5.1
+        self.assertIsNone(w.mensagem())
+        self.assertEqual(w.pedir(), "confirmar")                       # passou o prazo: pede de novo
+
+    def test_sem_ssh_nao_pede_confirmacao(self):
+        w = self._novo(NmFalso(ativo="casa", ip=True, perfil="DIHMO", ssh=False))
+        self.assertEqual(w.pedir(), "iniciou")
+
+    def test_telas_cheias(self):
+        try:
+            import display
+        except ImportError:
+            self.skipTest("Pillow não instalado")
+        for img in (display.desenhar_wifi_espera("DIHMO", "admin1234", 3),
+                    display.desenhar_wifi_resultado(True, "DIHMO"),
+                    display.desenhar_wifi_resultado(False, "DIHMO")):
+            self.assertEqual(img.size, (128, 64))
+            self.assertIsNotNone(img.getbbox())
+        fonte12 = display._fonte(12)
+        self.assertLessEqual(fonte12.getlength("WIFI CONECTADO"), 128)
+
+    def test_comando_wifi(self):
+        import wifi_ctl
+        from unittest import mock
+        arq = os.path.join(tempfile.mkdtemp(), "wifi.json")
+        with mock.patch.object(self.wifi.salvar, "__defaults__", (arq,)), \
+                mock.patch.object(self.wifi.carregar, "__defaults__", (arq,)), \
+                mock.patch.object(self.wifi, "tem_nmcli", lambda: False):
+            saida = io.StringIO()
+            with contextlib.redirect_stdout(saida):
+                wifi_ctl.main(["--ssid", "Casa", "--senha", "senha1234"])
+                wifi_ctl.main([])
+            self.assertIn("Rede:  Casa", saida.getvalue())
+            with self.assertRaises(SystemExit) as erro, contextlib.redirect_stdout(io.StringIO()):
+                wifi_ctl.main(["--ssid", "Casa", "--senha", "curta"])
+            self.assertIn("Nada foi gravado", str(erro.exception))
 
 
 class FakeSensorVoz:
@@ -488,7 +676,8 @@ class TesteTela(unittest.TestCase):
     def test_textos_do_b1_e_da_voz_cabem_na_tela(self):
         from PIL import ImageFont
         fonte = self.display._fonte(9)
-        textos = ["RECALIBRAR: POSTURA", "SOLTE: RECAL POSTURA", "CALIBRAR: POSTURA", "SOLTE: CALIB POSTURA", "RECALIBRAR: VOZ", "SOLTE: RECAL VOZ",
+        textos = ["RECALIBRAR: POSTURA", "SOLTE: RECAL POSTURA", "CALIBRAR: POSTURA", "SOLTE: CALIB POSTURA",
+                  "WIFI CONECTAR", "SOLTE: WIFI CONECTAR", "SSH ATIVO: REPITA", "RECALIBRAR: VOZ", "SOLTE: RECAL VOZ",
                   "VOZ 1/2: PREPARE-SE", "VOZ 1/2: FALE AAAA", "VOZ 2/2: ANALISANDO",
                   "VOZ CALIBRADA", "VOZ FALHOU", "SEM MIC/PRAAT", "VOZ: INICIANDO"]
         for t in textos:

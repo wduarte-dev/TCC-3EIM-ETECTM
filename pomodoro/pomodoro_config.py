@@ -66,12 +66,27 @@ CAMINHO_SOCKET_POSTURA = f"/tmp/postura-{os.getuid()}.sock"
 INTERVALO_CONSULTA_POSTURA_S = 1.0
 TIMEOUT_POSTURA_S = 1.5
 
-# --- B1: menu de recalibração (postura/voz) ---
+# --- B1: menu (postura / Wi-Fi) ---
 MENU_B1_TIMEOUT_S = 5.0      # sem clique por esse tempo, o menu fecha sozinho
 
-# --- Recalibração da voz pelo B1 (reaproveita o sensor-voz/main.py) ---
+# --- Wi-Fi (T7; ver wifi.py) ---
+# Rede padrão: fraca DE PROPÓSITO (fácil de criar no hotspot do celular). Enquanto o usuário
+# não troca com `wifi --ssid X --senha Y`, qualquer rede DIHMO com essa senha atrai o Pi.
+WIFI_SSID_PADRAO = "DIHMO"
+WIFI_SENHA_PADRAO = "admin1234"
+CAMINHO_WIFI = os.environ.get("POMODORO_WIFI") or os.path.join(
+    os.path.expanduser("~"), ".config", "pomodoro", "wifi.json")
+WIFI_PERFIL_NM = "tcc-wifi"  # nome do perfil no NetworkManager
+WIFI_INTERFACE = "wlan0"
+WIFI_PRIORIDADE = -10        # autoconnect um pouco abaixo das redes de desenvolvimento (padrão 0)
+WIFI_TIMEOUT_S = 120         # desiste depois disso (escolha do projeto, sem validação)
+WIFI_INTERVALO_S = 10        # repete rescan + connection up a cada X s (escolha do projeto)
+WIFI_RESULTADO_S = 3.0       # quanto tempo WIFI CONECTADO/FALHOU fica na tela
+WIFI_CONFIRMA_SSH_S = 5.0    # com SSH ativo, repetir o longo dentro desse tempo pra confirmar
+
+# --- Recalibração da voz (voz fora do escopo desde 19/11; sai no PR "voz fora do escopo") ---
 CAMINHO_SENSOR_VOZ = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                   "..", "sensor-voz", "main.py")
 CAMINHO_BASELINE_VOZ = os.path.join(os.path.dirname(CAMINHO_SENSOR_VOZ), "baseline_voz.json")
-PREPARO_VOZ_S = 2.0          # "PREPARE-SE" antes de cada gravação de 3 s
-MENSAGEM_FINAL_VOZ_S = 3.0   # quanto tempo "VOZ CALIBRADA/FALHOU" fica na tela
+PREPARO_VOZ_S = 2.0
+MENSAGEM_FINAL_VOZ_S = 3.0
