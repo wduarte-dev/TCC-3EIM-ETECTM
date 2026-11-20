@@ -148,6 +148,11 @@ class DetectorPostura:
         # T4: c/b (orelha-orelha ÷ ombros) do último quadro válido, só pro CSV; None se a
         # outra orelha não apareceu
         self.ultima_razao_cb = None
+        # coleta/ (estudo de validação): os 17 pontos crus (y, x, conf normalizados) e o
+        # letterbox do último quadro, pra gravar tudo sem rodar o modelo duas vezes.
+        # Só leitura: a decisão do serviço não usa estes dois atributos.
+        self.ultimos_keypoints = None
+        self.ultimo_letterbox = None
 
     def detectar_metricas_postura(self, frame, limiar_confianca):
         """
@@ -163,6 +168,8 @@ class DetectorPostura:
 
         self.interpretador.invoke()
         keypoints = self.interpretador.get_tensor(self.indice_saida)[0][0]
+        self.ultimos_keypoints = keypoints
+        self.ultimo_letterbox = (tamanho, escala, offset_x, offset_y)
 
         orelha_y, orelha_x, conf_orelha = keypoints[ORELHA_ESQ]
         ombro_esq_y, ombro_esq_x, conf_ombro_esq = keypoints[OMBRO_ESQ]
