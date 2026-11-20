@@ -4,15 +4,16 @@ relógio. Recebe os 3 pontos (orelha esquerda, ombro esquerdo, ombro direito, em
 pixels) e a baseline, e devolve o estado e os valores. Por isso dá pra testar
 com pontos sintéticos, sem o Pi (ver test_postura_logica.py).
 
-O comportamento é o MESMO que estava dentro do laço do postura_servico.py
-(mesmos limiares, média móvel e contador); os testes comparam quadro a quadro
-com uma cópia do código antigo.
+Os limiares, a média móvel e a regra de um quadro são os mesmos do código
+antigo (T1, provado por teste). O contador de ALERTA mudou de propósito no T3:
+as perdas de detecção no meio de uma sequência ruim passam a contar como indício.
 """
 import math
 from collections import deque, namedtuple
 
 from postura_config import (
     LIMIAR_DESVIO_ANGULO, LIMIAR_QUEDA_RAZAO, HISTORICO_TAMANHO, FRAMES_PARA_ALERTA,
+    PERDAS_TOLERADAS, MINIMO_RUINS_MEDIDOS,
 )
 
 CORRETA = "CORRETA"
@@ -49,6 +50,19 @@ def calcular_razao_pescoco(x_orelha, y_orelha, x_ombro_esq, y_ombro_esq, x_ombro
     if dist_ombros < 1e-6:
         return None
     return dist_orelha_ombro / dist_ombros
+
+
+def calcular_razao_cb(x_orelha_esq, y_orelha_esq, x_orelha_dir, y_orelha_dir,
+                      x_ombro_esq, y_ombro_esq, x_ombro_dir, y_ombro_dir):
+    """
+    T4: c/b = distância orelha-orelha ÷ largura dos ombros. Só ARMAZENADA no CSV: não
+    entra na decisão até os dados do estudo mostrarem que ela separa postura boa de ruim.
+    Hipótese (não medida): cabeça pra frente com ombros parados → rosto mais perto → c/b sobe.
+    """
+    dist_ombros = math.hypot(x_ombro_dir - x_ombro_esq, y_ombro_dir - y_ombro_esq)
+    if dist_ombros < 1e-6:
+        return None
+    return math.hypot(x_orelha_dir - x_orelha_esq, y_orelha_dir - y_orelha_esq) / dist_ombros
 
 
 def metricas(pontos):
@@ -102,8 +116,14 @@ def descrever_falta(faltas, total):
     return f"{' e '.join(nomes)} fora da imagem ({pior} de {total} quadros)"
 
 
-Avaliacao = namedtuple("Avaliacao", "status angulo razao desvio_angulo queda_razao")
-"""Resultado de um quadro. angulo/razao já suavizados (média móvel); None em SEM_USUARIO."""
+Avaliacao = namedtuple("Avaliacao",
+                       "status angulo razao desvio_angulo queda_razao status_exibido")
+"""
+Resultado de um quadro.
+  status          o que o QUADRO mostrou (SEM_USUARIO quando perdeu os pontos): vai pro CSV
+  status_exibido  a decisão que vai pra tela (numa perda tolerada continua ATENCAO/ALERTA)
+  angulo/razao    já suavizados (média móvel); None quando o quadro não tem pontos
+"""
 
 
 class AvaliadorPostura:
@@ -111,27 +131,47 @@ class AvaliadorPostura:
     Estado entre quadros (média móvel + contador de postura ruim). Uma instância
     por baseline: calibrou de novo, cria outra (ou chama zerar()).
 
-        ruim       → contador += 1; ALERTA quando passa de FRAMES_PARA_ALERTA, senão ATENCAO
-        correta    → contador -= 1 (mínimo 0) → CORRETA
-        sem pontos → SEM_USUARIO; limpa a média móvel e NÃO mexe no contador
+    Contador (T3; c = contador, K = FRAMES_PARA_ALERTA, N = PERDAS_TOLERADAS,
+    M = MINIMO_RUINS_MEDIDOS):
+        ruim medido → c += 1, perdidos = 0, medidos += 1
+        correta     → c -= 1 (mínimo 0), perdidos = 0; c chegou a 0 → medidos = 0
+                      (o desconto de 1 é o comportamento antigo, mantido)
+        sem pontos  → limpa a média móvel e:
+                      - sem sequência ruim (c = 0): SEM_USUARIO, nada muda
+                      - com sequência ruim: perdidos += 1; se perdidos <= N, c += 1
+                        (indício: encurvado no limite da captação) e a tela continua na
+                        decisão; se perdidos > N, zera tudo e mostra SEM_USUARIO
+                        (saiu do enquadramento)
+        ALERTA quando c > K E medidos >= M (trava: o alerta não pode vir
+        majoritariamente de quadros perdidos). Senão, ruim = ATENCAO.
     """
 
     def __init__(self, baseline_angulo, baseline_razao,
                  limiar_angulo=LIMIAR_DESVIO_ANGULO, limiar_queda=LIMIAR_QUEDA_RAZAO,
-                 historico=HISTORICO_TAMANHO, frames_para_alerta=FRAMES_PARA_ALERTA):
+                 historico=HISTORICO_TAMANHO, frames_para_alerta=FRAMES_PARA_ALERTA,
+                 perdas_toleradas=PERDAS_TOLERADAS, minimo_medidos=MINIMO_RUINS_MEDIDOS):
         self.baseline_angulo = baseline_angulo
         self.baseline_razao = baseline_razao
         self.limiar_angulo = limiar_angulo
         self.limiar_queda = limiar_queda
         self.frames_para_alerta = frames_para_alerta
+        self.perdas_toleradas = perdas_toleradas
+        self.minimo_medidos = minimo_medidos
         self._angulos = deque(maxlen=historico)
         self._razoes = deque(maxlen=historico)
         self.contador = 0
+        self.perdidos = 0      # perdas seguidas dentro da sequência ruim
+        self.medidos = 0       # quadros ruins MEDIDOS na sequência atual
 
     def zerar(self):
         self._angulos.clear()
         self._razoes.clear()
-        self.contador = 0
+        self.contador = self.perdidos = self.medidos = 0
+
+    def _decisao_ruim(self):
+        if self.contador > self.frames_para_alerta and self.medidos >= self.minimo_medidos:
+            return ALERTA
+        return ATENCAO
 
     def avaliar(self, pontos):
         """pontos: os 6 valores em pixels, ou None quando o MoveNet não achou os 3 pontos."""
@@ -139,7 +179,15 @@ class AvaliadorPostura:
         if angulo_bruto is None:
             self._angulos.clear()
             self._razoes.clear()
-            return Avaliacao(SEM_USUARIO, None, None, None, None)
+            exibido = SEM_USUARIO
+            if self.contador > 0:
+                self.perdidos += 1
+                if self.perdidos <= self.perdas_toleradas:
+                    self.contador += 1
+                    exibido = self._decisao_ruim()
+                else:
+                    self.contador = self.perdidos = self.medidos = 0
+            return Avaliacao(SEM_USUARIO, None, None, None, None, exibido)
 
         self._angulos.append(angulo_bruto)
         self._razoes.append(razao_bruta)
@@ -149,10 +197,14 @@ class AvaliadorPostura:
         desvio_angulo = abs(angulo - self.baseline_angulo)
         queda_razao = (self.baseline_razao - razao) / self.baseline_razao  # só interessa quando DIMINUI
 
+        self.perdidos = 0
         if postura_ruim(desvio_angulo, queda_razao, self.limiar_angulo, self.limiar_queda):
             self.contador += 1
-            status = ALERTA if self.contador > self.frames_para_alerta else ATENCAO
+            self.medidos += 1
+            status = self._decisao_ruim()
         else:
             self.contador = max(0, self.contador - 1)
+            if self.contador == 0:
+                self.medidos = 0
             status = CORRETA
-        return Avaliacao(status, angulo, razao, desvio_angulo, queda_razao)
+        return Avaliacao(status, angulo, razao, desvio_angulo, queda_razao, status)

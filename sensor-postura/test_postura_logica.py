@@ -13,6 +13,7 @@ from collections import deque
 import postura_logica as pl
 from postura_config import (
     LIMIAR_DESVIO_ANGULO, LIMIAR_QUEDA_RAZAO, HISTORICO_TAMANHO, FRAMES_PARA_ALERTA,
+    PERDAS_TOLERADAS, MINIMO_RUINS_MEDIDOS,
 )
 
 # Postura de referência: orelha 100 px acima do ombro esquerdo, ombros a 200 px
@@ -146,12 +147,11 @@ class TesteDecisao(unittest.TestCase):
         av.avaliar(RETO)
         self.assertEqual(av.contador, 9)
 
-    def test_sem_usuario_nao_mexe_no_contador_e_limpa_a_media(self):
+    def test_sem_usuario_limpa_a_media(self):
         av = pl.AvaliadorPostura(*BASE)
         for _ in range(10):
             av.avaliar(tombado(40))
         av.avaliar(None)
-        self.assertEqual(av.contador, 10)
         r = av.avaliar(RETO)      # média recomeça do zero: só o quadro reto conta
         self.assertAlmostEqual(r.angulo, 0.0)
 
@@ -180,15 +180,82 @@ class TesteEnquadramento(unittest.TestCase):
         self.assertIsNone(pl.descrever_falta({}, 0))
 
 
+R, S, C = "R", "S", "C"     # quadro ruim medido, sem pontos, correto
+
+
+def rodar(texto, **kw):
+    """'R*5 S R*10' → lista de status exibidos (último = o que a tela mostra no fim)."""
+    av = pl.AvaliadorPostura(*BASE, historico=1, **kw)
+    saida = []
+    for parte in texto.split():
+        letra, _, vezes = parte.partition("*")
+        quadro = {R: tombado(40), S: None, C: RETO}[letra]
+        for _ in range(int(vezes or 1)):
+            saida.append(av.avaliar(quadro))
+    return av, saida
+
+
+class TesteContadorDeAlerta(unittest.TestCase):
+    """T3: perdas de detecção no meio de uma sequência ruim contam como indício."""
+
+    def test_sem_perdas_continua_alertando_no_16o_quadro(self):
+        _, saida = rodar("R*16")
+        self.assertEqual(saida[14].status_exibido, pl.ATENCAO)
+        self.assertEqual(saida[15].status_exibido, pl.ALERTA)
+
+    def test_perda_curta_no_meio_conta_e_tela_segue_na_decisao(self):
+        av, saida = rodar("R*5 S R*10")
+        self.assertEqual(saida[5].status, pl.SEM_USUARIO)          # CSV: dado honesto
+        self.assertEqual(saida[5].status_exibido, pl.ATENCAO)       # tela: segue a sequência
+        self.assertEqual(av.contador, 16)
+        self.assertEqual(saida[-1].status_exibido, pl.ALERTA)       # 1 quadro antes que sem perdas
+
+    def test_padrao_aviso_sem_aviso_sem_vira_alerta(self):
+        _, saida = rodar("R S " * 8)
+        self.assertEqual(saida[-1].status, pl.SEM_USUARIO)
+        self.assertEqual(saida[-1].status_exibido, pl.ALERTA)
+
+    def test_perda_longa_e_sem_usuario_e_zera(self):
+        av, saida = rodar(f"R*10 S*{PERDAS_TOLERADAS + 1}")
+        self.assertEqual(saida[-2].status_exibido, pl.ATENCAO)      # ainda tolerada
+        self.assertEqual(saida[-1].status_exibido, pl.SEM_USUARIO)  # passou de N
+        self.assertEqual((av.contador, av.perdidos, av.medidos), (0, 0, 0))
+
+    def test_sem_sequencia_ruim_perda_nao_inicia_alerta(self):
+        av, saida = rodar("C*3 S*20")
+        self.assertTrue(all(a.status_exibido == pl.SEM_USUARIO for a in saida[3:]))
+        self.assertEqual(av.contador, 0)
+
+    def test_trava_alerta_nao_vem_majoritariamente_de_perdas(self):
+        # 1 ruim medido + perdas toleradas alternando: contador passa de 15, mas medidos < M
+        av, saida = rodar("R S*5 R S*5 R S*5", minimo_medidos=MINIMO_RUINS_MEDIDOS)
+        self.assertGreater(av.contador, FRAMES_PARA_ALERTA)
+        self.assertLess(av.medidos, MINIMO_RUINS_MEDIDOS)
+        self.assertEqual(saida[-1].status_exibido, pl.ATENCAO)
+
+    def test_correta_desconta_e_zera_medidos_quando_contador_zera(self):
+        av, _ = rodar("R*3 C*3")
+        self.assertEqual((av.contador, av.medidos), (0, 0))
+        av, _ = rodar("R*5 C")
+        self.assertEqual((av.contador, av.medidos), (4, 5))
+
+    def test_correta_zera_as_perdas_seguidas(self):
+        av, _ = rodar("R*10 S*3 C S")
+        self.assertEqual(av.perdidos, 1)
+
+
 class TesteIgualAoCodigoAntigo(unittest.TestCase):
-    """Prova do T1: mesma saída do código antigo em sequências aleatórias longas."""
+    """
+    Prova do T1: SEM perdas de detecção, a decisão é idêntica à do código antigo em
+    sequências aleatórias longas. (Com perdas, o T3 muda de propósito: ver acima.)
+    """
 
     def _comparar(self, sequencia, baseline):
         antiga = ReferenciaAntiga(*baseline)
         nova = pl.AvaliadorPostura(*baseline)
         for i, pontos in enumerate(sequencia):
             esperado = antiga.passo(pontos)
-            obtido = tuple(nova.avaliar(pontos))
+            obtido = tuple(nova.avaliar(pontos))[:5]
             self.assertEqual(obtido, esperado, f"quadro {i}: {pontos}")
             self.assertEqual(nova.contador, antiga.contador_ma_postura, f"contador no quadro {i}")
 
@@ -198,21 +265,14 @@ class TesteIgualAoCodigoAntigo(unittest.TestCase):
             baseline = (sorteio.uniform(0, 20), sorteio.uniform(0.3, 0.8))
             sequencia = []
             for _ in range(300):
-                tipo = sorteio.random()
-                if tipo < 0.15:
-                    sequencia.append(None)
-                elif tipo < 0.18:
-                    sequencia.append((300, 100, 300, 200, 300, 200))     # ombros coincidentes
-                else:
-                    # pixels inteiros, como o detector entrega
-                    sequencia.append(tuple(int(sorteio.uniform(0, 640)) for _ in range(6)))
+                # pixels inteiros, como o detector entrega
+                sequencia.append(tuple(int(sorteio.uniform(0, 640)) for _ in range(6)))
             self._comparar(sequencia, baseline)
 
     def test_sequencias_proximas_do_limiar(self):
         sorteio = random.Random(7)
         for _ in range(100):
-            sequencia = [None if sorteio.random() < 0.1 else
-                         (tombado(sorteio.uniform(0, 25)) if sorteio.random() < 0.5 else caido(sorteio.uniform(0.75, 1.0)))
+            sequencia = [(tombado(sorteio.uniform(0, 25)) if sorteio.random() < 0.5 else caido(sorteio.uniform(0.75, 1.0)))
                          for _ in range(300)]
             self._comparar(sequencia, BASE)
 
