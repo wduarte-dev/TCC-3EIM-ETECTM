@@ -45,7 +45,7 @@ import cv2
 import numpy as np
 
 from postura_config import (
-    CAMINHO_MODELO, DIR_VIDEOS, DIR_LOGS, CAMINHO_SOCKET, FAMILIA_SOCKET, EH_WINDOWS,
+    CAMINHO_MODELO, DIR_VIDEOS, DIR_LOGS, DIR_FOTOS, FOTO_LARGURA, CAMINHO_SOCKET, FAMILIA_SOCKET, EH_WINDOWS,
     ARQUIVO_BASELINE,
     INDICE_CAMERA, LARGURA, ALTURA,
     LIMIAR_CONFIANCA, DURACAO_CALIBRACAO,
@@ -379,6 +379,7 @@ class MonitorPostura:
             "calibracao": {"id": 0, "ok": None, "msg": ""},
             "gravacao": {"id": 0, "ok": None, "msg": "", "arquivo": None},
         }
+        self._ultimo_quadro = None   # (frame, pontos, linhas) pro `postura foto`
         self._status_impresso = None
         self._texto_impresso = None
         self._ultimo_print = 0.0
@@ -419,8 +420,11 @@ class MonitorPostura:
 
         # >>> DISPLAY OLED: quando estiver pronto, desenhar o status aqui. <<<
 
-    def _mostrar_preview(self, frame, linhas):
-        """Janela opcional (--preview). linhas = [(texto, cor_bgr), ...]"""
+    def _mostrar_preview(self, frame, linhas, pontos=None):
+        """Janela opcional (--preview). linhas = [(texto, cor_bgr), ...]
+        Também guarda o quadro (só a referência, sem custo) pro `postura foto` (T5)."""
+        with self.lock:
+            self._ultimo_quadro = (frame, pontos, [t for t, _ in linhas])
         if not self.preview:
             return
         y = 40
@@ -582,7 +586,7 @@ class MonitorPostura:
                 self._mostrar_preview(frame, [
                     ("Fique na postura CORRETA", (0, 255, 255)),
                     (f"Calibrando em {segundos}s", (0, 255, 255)),
-                ])
+                ], pontos)
 
         # --- Passo 2: coleta de amostras ---
         amostras_angulo, amostras_razao = [], []
@@ -632,7 +636,7 @@ class MonitorPostura:
                 f"Calibrando... fique parado ({math.ceil(restante)}s)",
                 forcar=True, pontos_visiveis=visiveis,
             )
-            self._mostrar_preview(frame, [(f"Calibrando... {restante:0.1f}s", (0, 255, 0))])
+            self._mostrar_preview(frame, [(f"Calibrando... {restante:0.1f}s", (0, 255, 0))], pontos)
 
         if not self.rodando:
             return ("fim",)
@@ -892,9 +896,45 @@ class MonitorPostura:
                 razao_cb=self.detector.ultima_razao_cb if pontos is not None else None,
             )
 
-            self._mostrar_preview(frame, [(status_texto, cor_alerta)])
+            self._mostrar_preview(frame, [(status_texto, cor_alerta)], pontos)
 
         return ("live", None)
+
+    # ---------------- foto (T5) ----------------
+
+    def _salvar_foto(self):
+        """
+        JPEG reduzido do último quadro, com os 3 pontos, as linhas orelha-ombro e
+        ombro-ombro e o status. Ferramenta de desenvolvimento (ver a calibração/enquadramento
+        por SSH sem `ssh -X`): só gera quando pedido, então não pesa no laço.
+        """
+        with self.lock:
+            guardado = self._ultimo_quadro
+            estado = dict(self.estado)
+        if guardado is None:
+            return None, "Ainda não há quadro da câmera (sem câmera ou iniciando)."
+        frame, pontos, linhas = guardado
+        imagem = frame.copy()
+        if pontos is not None:
+            desenhar_pontos(imagem, pontos)
+        escala = FOTO_LARGURA / imagem.shape[1]
+        imagem = cv2.resize(imagem, (FOTO_LARGURA, int(round(imagem.shape[0] * escala))))
+        textos = list(linhas) or [estado.get("status", "")]
+        if estado.get("desvio_angulo") is not None:
+            textos.append(f"desvio {estado['desvio_angulo']} graus | queda {estado.get('queda_razao_pct')}%")
+        if pontos is None:
+            textos.append("sem os 3 pontos neste quadro")
+        y = 18
+        for texto in textos:
+            texto = texto.encode("ascii", "replace").decode()   # Hershey não tem acento
+            cv2.putText(imagem, texto, (6, y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 3, cv2.LINE_AA)
+            cv2.putText(imagem, texto, (6, y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
+            y += 16
+        os.makedirs(DIR_FOTOS, exist_ok=True)
+        caminho = os.path.join(DIR_FOTOS, "postura_foto.jpg")
+        if not cv2.imwrite(caminho, imagem, [cv2.IMWRITE_JPEG_QUALITY, 80]):
+            return None, f"Não consegui gravar {caminho}"
+        return caminho, None
 
     # ---------------- comandos (socket) ----------------
 
@@ -947,6 +987,11 @@ class MonitorPostura:
         if acao == "status":
             with self.lock:
                 return {"ok": True, "estado": json.loads(json.dumps(self.estado))}
+        if acao == "foto":
+            caminho, erro = self._salvar_foto()
+            if erro:
+                return {"ok": False, "erro": erro}
+            return {"ok": True, "msg": caminho, "arquivo": caminho}
         if acao == "live":
             self.comandos.put(("live", None))
             return {"ok": True, "msg": "Voltando pra câmera ao vivo. Depois rode: postura recalibrar"}

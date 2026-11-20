@@ -18,6 +18,7 @@ pelo comando `postura`.
 | `main-otimizado-rpi3b.py` | Versão anterior (com janela, ENTER pra calibrar). Mantida como referência |
 | `videos/` | Vídeos de teste (não vão pro Git) |
 | `logs/` | Um CSV por dia com todas as medições (não vai pro Git) |
+| `fotos/` | Última `postura foto` (não vai pro Git) |
 | `baseline.json` | Última calibração ao vivo (gerado sozinho, não vai pro Git) |
 
 ## Como funciona
@@ -141,6 +142,7 @@ postura status        # o que está rodando agora (fonte, status, baseline, FPS)
 postura recalibrar    # contagem de 10s (mostrada no terminal) + 5s de coleta
 postura gravar 30     # grava 30s da webcam em videos/ (precisa ser mais que 5s)
 postura janela        # abre o monitor com a janela da câmera (precisa de ssh -X)
+postura foto          # JPEG do último quadro com os 3 pontos e o status (baixe com scp)
 postura live          # volta pra câmera ao vivo (fica aguardando calibração)
 postura video         # lista os vídeos de videos/ e você escolhe pelo número
 postura video 2       # troca direto pro vídeo nº 2
@@ -156,6 +158,21 @@ O serviço roda escondido pelo systemd e não tem tela. O `postura janela` pausa
 serviço, abre o monitor com a janela **no seu terminal** e, quando você fecha
 (`q` na janela ou Ctrl+C) ou se der erro, **religa o serviço sozinho**. A baseline
 é reaproveitada nos dois sentidos, então não precisa recalibrar.
+
+### `postura foto` (ferramenta de desenvolvimento, T5)
+
+Salva `fotos/postura_foto.jpg` (320 px de largura) com o **último quadro** da câmera, os 3 pontos,
+as linhas orelha–ombro e ombro–ombro e o status/desvio/queda. Serve pra conferir enquadramento e
+calibração por SSH sem `ssh -X` nem parar o serviço. O comando imprime o `scp` pra baixar:
+
+```bash
+postura foto
+scp usuario@raspberrypi.local:/caminho/impresso/postura_foto.jpg .
+```
+
+O serviço só guarda a referência do último quadro (sem cópia) e só desenha/comprime o JPEG quando o
+comando é pedido; o custo no Pi 3B não foi medido. Na banca, quem mostra a câmera ao vivo é o
+`postura janela`. Não é recurso do produto final (que não tem SSH).
 
 ## Testando com vídeo
 
