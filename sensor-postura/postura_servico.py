@@ -903,14 +903,14 @@ class MonitorPostura:
     # ---------------- comandos (socket) ----------------
 
     def _servidor_comandos(self):
-        if FAMILIA_SOCKET == socket.AF_UNIX:
+        if not EH_WINDOWS:
             try:
                 os.remove(CAMINHO_SOCKET)
             except OSError:
                 pass
         servidor = socket.socket(FAMILIA_SOCKET, socket.SOCK_STREAM)
         servidor.bind(CAMINHO_SOCKET)
-        if FAMILIA_SOCKET == socket.AF_UNIX:
+        if not EH_WINDOWS:
             os.chmod(CAMINHO_SOCKET, 0o600)  # só o próprio usuário manda comandos
         servidor.listen(4)
         servidor.settimeout(1.0)
@@ -988,7 +988,7 @@ class MonitorPostura:
 # =====================================================================
 
 def outra_instancia_rodando():
-    if FAMILIA_SOCKET == socket.AF_UNIX and not os.path.exists(CAMINHO_SOCKET):
+    if not EH_WINDOWS and not os.path.exists(CAMINHO_SOCKET):
         return False
     teste = socket.socket(FAMILIA_SOCKET, socket.SOCK_STREAM)
     teste.settimeout(1.0)

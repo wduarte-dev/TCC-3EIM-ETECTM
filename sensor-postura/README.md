@@ -87,12 +87,15 @@ Ele acha o `~/venv-tcc` sozinho. Se o venv estiver em outro lugar:
 O mesmo código roda no Windows; o Raspberry Pi continua igual. Não há serviço
 (systemd): roda-se o monitor direto.
 
-```powershell
+```bat
 py -3.11 -m venv venv-tcc
-venv-tcc\Scripts\activate
-pip install "numpy<2" opencv-python ai-edge-litert
-python postura_servico.py --preview
+venv-tcc\Scripts\python.exe -m pip install "numpy<2" opencv-python ai-edge-litert
+venv-tcc\Scripts\python.exe postura_servico.py --preview
 ```
+
+Chamar o `python.exe` de dentro do `venv-tcc` evita instalar no Python errado
+(o `pip` solto pode ser de outra versão; o `numpy<2` não tem pacote pronto pro 3.14).
+No `cmd` a ativação é `venv-tcc\Scripts\activate.bat`; o `Activate.ps1` só vale no PowerShell.
 
 - **Modelo:** não existe `tflite-runtime` pra Windows; o código usa o `ai-edge-litert`
   (ou o TensorFlow completo) sozinho, nessa ordem.
