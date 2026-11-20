@@ -20,7 +20,8 @@ O que mudou em relação ao main-otimizado.py:
 - Janela com o vídeo é OPCIONAL (--preview), pra debug via `ssh -X`.
 
 Os cálculos (ângulo, razão pescoço/ombros, limiares, média móvel e contador de
-alerta) e as otimizações do Pi 3B são os MESMOS do main-otimizado.py.
+alerta) são os MESMOS do main-otimizado.py e ficam em postura_logica.py
+(lógica pura, testada sem câmera). As otimizações do Pi 3B ficam aqui.
 
 Uso manual:
     python3 postura_servico.py                 # headless, câmera ao vivo
@@ -38,7 +39,6 @@ import signal
 import socket
 import argparse
 import threading
-from collections import deque
 from datetime import datetime
 
 import cv2
@@ -48,11 +48,14 @@ from postura_config import (
     CAMINHO_MODELO, DIR_VIDEOS, DIR_LOGS, CAMINHO_SOCKET, FAMILIA_SOCKET, EH_WINDOWS,
     ARQUIVO_BASELINE,
     INDICE_CAMERA, LARGURA, ALTURA,
-    LIMIAR_CONFIANCA, LIMIAR_DESVIO_ANGULO, LIMIAR_QUEDA_RAZAO,
-    DURACAO_CALIBRACAO, HISTORICO_TAMANHO, FRAMES_PARA_ALERTA,
+    LIMIAR_CONFIANCA, DURACAO_CALIBRACAO,
     CONTAGEM_CALIBRACAO, CONTAGEM_GRAVACAO, GRAVACAO_MAX_S,
     INTERVALO_PRINT_S, MAX_FALHAS_LEITURA, ESPERA_CAMERA_S,
     listar_videos,
+)
+from postura_logica import (
+    AvaliadorPostura, metricas, calcular_baseline,
+    CORRETA, ATENCAO, ALERTA,
 )
 
 # Índices das articulações no MoveNet (COCO format)
@@ -63,45 +66,9 @@ NOME_JANELA = "Monitoramento de Postura - TCC"
 
 
 # =====================================================================
-# CÁLCULOS — idênticos ao main-otimizado.py
+# CÁLCULOS: ângulo, razão e decisão ficam em postura_logica.py (lógica pura,
+# testada sem câmera). Aqui só a parte de imagem (letterbox, MoveNet).
 # =====================================================================
-
-def calcular_angulo_vertical(x_orelha, y_orelha, x_ombro, y_ombro):
-    """
-    Calcula o DESVIO EM DIREÇÃO (graus) da linha orelha-ombro em relação à
-    vertical. Sozinho, isso só pega inclinação LATERAL da cabeça — não pega
-    "queda" de cabeça pra frente/baixo sem deslocamento lateral, porque
-    atan2 é invariante à magnitude do vetor. Por isso combinamos com
-    calcular_razao_pescoco() abaixo.
-    """
-    dx = x_orelha - x_ombro
-    dy = y_orelha - y_ombro  # No OpenCV, Y cresce para baixo, então orelha está acima (y menor)
-
-    if dy == 0:
-        return 0.0
-
-    angulo_rad = math.atan2(dx, -dy)
-    return abs(math.degrees(angulo_rad))
-
-
-def calcular_razao_pescoco(x_orelha, y_orelha, x_ombro_esq, y_ombro_esq, x_ombro_dir, y_ombro_dir):
-    """
-    Mede o comprimento aparente do "pescoço" (distância orelha-ombro),
-    normalizado pela largura dos ombros (que serve de referência de escala
-    e cancela o efeito de aproximar/afastar da câmera).
-
-    Esse é o componente que capta postura ruim SUTIL: quando a cabeça cai
-    pra frente/baixo (cervical flexion, "text neck"), essa razão diminui,
-    mesmo quando o ângulo lateral (função acima) quase não muda.
-    """
-    dist_orelha_ombro = math.hypot(x_orelha - x_ombro_esq, y_orelha - y_ombro_esq)
-    dist_ombros = math.hypot(x_ombro_dir - x_ombro_esq, y_ombro_dir - y_ombro_esq)
-
-    if dist_ombros < 1e-6:
-        return None
-
-    return dist_orelha_ombro / dist_ombros
-
 
 def preprocessar_letterbox(frame, tamanho):
     """
@@ -202,12 +169,10 @@ class DetectorPostura:
         x_ombro_esq, y_ombro_esq = desnormalizar_keypoint(ombro_esq_x, ombro_esq_y, tamanho, escala, offset_x, offset_y)
         x_ombro_dir, y_ombro_dir = desnormalizar_keypoint(ombro_dir_x, ombro_dir_y, tamanho, escala, offset_x, offset_y)
 
-        angulo_bruto = calcular_angulo_vertical(x_orelha, y_orelha, x_ombro_esq, y_ombro_esq)
-        razao_pescoco = calcular_razao_pescoco(
-            x_orelha, y_orelha, x_ombro_esq, y_ombro_esq, x_ombro_dir, y_ombro_dir
-        )
-
         pontos = (x_orelha, y_orelha, x_ombro_esq, y_ombro_esq, x_ombro_dir, y_ombro_dir)
+        angulo_bruto, razao_pescoco = metricas(pontos)
+        if angulo_bruto is None:   # ombros coincidentes: sem escala, conta como sem detecção
+            return None, None, None
         return angulo_bruto, razao_pescoco, pontos
 
 
@@ -629,14 +594,14 @@ class MonitorPostura:
         if not self.rodando:
             return ("fim",)
 
-        if len(amostras_angulo) < 5:
+        baseline = calcular_baseline(amostras_angulo, amostras_razao)
+        if baseline is None:
             msg = "Calibração falhou (poucas detecções válidas). Confira se você aparece na câmera."
             self.mostrar_status("CALIBRACAO_FALHOU", msg, forcar=True)
             self._registrar_fim("calibracao", ok=False, msg=msg)
             return ("falhou",)
 
-        baseline_angulo = sum(amostras_angulo) / len(amostras_angulo)
-        baseline_razao = sum(amostras_razao) / len(amostras_razao)
+        baseline_angulo, baseline_razao = baseline
 
         if tipo == "live":
             salvar_baseline(baseline_angulo, baseline_razao)
@@ -757,9 +722,7 @@ class MonitorPostura:
         precisa_calibrar = (tipo == "video") or self._recalibrar_pendente
         self._recalibrar_pendente = False
 
-        contador_ma_postura = 0
-        historico_angulos = deque(maxlen=HISTORICO_TAMANHO)
-        historico_razoes = deque(maxlen=HISTORICO_TAMANHO)
+        avaliador = AvaliadorPostura(*baseline) if baseline else None
         falhas = 0
         fps = 0.0
         ultimo_frame_t = None
@@ -779,9 +742,7 @@ class MonitorPostura:
                     baseline = None  # ao vivo: volta a aguardar outro `postura recalibrar`
                     continue
                 baseline = resultado[1]
-                contador_ma_postura = 0
-                historico_angulos.clear()
-                historico_razoes.clear()
+                avaliador = AvaliadorPostura(*baseline)   # média móvel e contador do zero
                 ultimo_frame_t = None
                 continue
 
@@ -837,45 +798,24 @@ class MonitorPostura:
                 fps = fps_inst if fps == 0 else 0.9 * fps + 0.1 * fps_inst
             ultimo_frame_t = agora
 
-            angulo_bruto, razao_pescoco, pontos = self.detector.detectar_metricas_postura(frame, LIMIAR_CONFIANCA)
+            _, _, pontos = self.detector.detectar_metricas_postura(frame, LIMIAR_CONFIANCA)
+            if pontos is not None and self.preview:
+                desenhar_pontos(frame, pontos)
 
-            status = "SEM_USUARIO"
-            status_texto = "Procurando usuario..."
-            cor_alerta = (255, 255, 255)
-            angulo = razao = desvio_angulo = queda_razao = None
-
-            if angulo_bruto is not None and razao_pescoco is not None:
-                if self.preview:
-                    desenhar_pontos(frame, pontos)
-
-                # Suavização temporal (média móvel)
-                historico_angulos.append(angulo_bruto)
-                historico_razoes.append(razao_pescoco)
-                angulo = sum(historico_angulos) / len(historico_angulos)
-                razao = sum(historico_razoes) / len(historico_razoes)
-
-                # Componente lateral: desvio do ângulo em relação à baseline
-                desvio_angulo = abs(angulo - baseline_angulo)
-
-                # Componente de "queda de cabeça" (só interessa quando DIMINUI)
-                queda_razao = (baseline_razao - razao) / baseline_razao
-
-                postura_ruim = desvio_angulo > LIMIAR_DESVIO_ANGULO or queda_razao > LIMIAR_QUEDA_RAZAO
-                medidas = f"(ang {int(desvio_angulo)}° / queda {queda_razao * 100:.0f}%)"
-
-                if postura_ruim:
-                    contador_ma_postura += 1
-                    if contador_ma_postura > FRAMES_PARA_ALERTA:
-                        status, status_texto, cor_alerta = "ALERTA", f"ALERTA: POSTURA INCORRETA {medidas}", (0, 0, 255)
-                    else:
-                        status, status_texto, cor_alerta = "ATENCAO", f"ATENCAO... {medidas}", (0, 255, 255)
-                else:
-                    contador_ma_postura = max(0, contador_ma_postura - 1)
-                    status, status_texto, cor_alerta = "CORRETA", f"POSTURA CORRETA {medidas}", (0, 255, 0)
+            # Decisão (lógica pura, ver postura_logica.py)
+            resultado = avaliador.avaliar(pontos)
+            status = resultado.status
+            angulo, razao = resultado.angulo, resultado.razao
+            desvio_angulo, queda_razao = resultado.desvio_angulo, resultado.queda_razao
+            if status == "SEM_USUARIO":
+                status_texto, cor_alerta = "Procurando usuario...", (255, 255, 255)
             else:
-                # Sem detecção confiável: zera os históricos
-                historico_angulos.clear()
-                historico_razoes.clear()
+                medidas = f"(ang {int(desvio_angulo)}° / queda {queda_razao * 100:.0f}%)"
+                status_texto, cor_alerta = {
+                    ALERTA: (f"ALERTA: POSTURA INCORRETA {medidas}", (0, 0, 255)),
+                    ATENCAO: (f"ATENCAO... {medidas}", (0, 255, 255)),
+                    CORRETA: (f"POSTURA CORRETA {medidas}", (0, 255, 0)),
+                }[status]
 
             queda_pct = queda_razao * 100 if queda_razao is not None else None
             self.mostrar_status(
