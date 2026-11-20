@@ -82,6 +82,27 @@ Ele acha o `~/venv-tcc` sozinho. Se o venv estiver em outro lugar:
 
 **Atualizar depois:** `git pull && postura reiniciar`
 
+## Rodando no Windows (desenvolvimento/demo)
+
+O mesmo código roda no Windows; o Raspberry Pi continua igual. Não há serviço
+(systemd): roda-se o monitor direto.
+
+```powershell
+py -3.11 -m venv venv-tcc
+venv-tcc\Scripts\activate
+pip install "numpy<2" opencv-python ai-edge-litert
+python postura_servico.py --preview
+```
+
+- **Modelo:** não existe `tflite-runtime` pra Windows; o código usa o `ai-edge-litert`
+  (ou o TensorFlow completo) sozinho, nessa ordem.
+- **Câmera:** usa o backend DirectShow (`CAP_DSHOW`) em vez do V4L2.
+- **Comandos:** em outro terminal, `python postura_ctl.py status|recalibrar|gravar N|live|video`.
+  Eles falam com o monitor por TCP em `127.0.0.1:47831` (no Linux é socket Unix).
+  `iniciar`, `parar`, `reiniciar`, `log` e `janela` dependem do systemd e não existem no Windows.
+- **Limite:** FPS e baseline do Windows não valem pro Pi (outra câmera, outra CPU).
+  Serve pra desenvolver e demonstrar, não como dado de desempenho do TCC.
+
 ## Comandos
 
 ```bash

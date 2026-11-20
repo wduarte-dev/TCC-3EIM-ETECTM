@@ -45,7 +45,8 @@ import cv2
 import numpy as np
 
 from postura_config import (
-    CAMINHO_MODELO, DIR_VIDEOS, DIR_LOGS, CAMINHO_SOCKET, ARQUIVO_BASELINE,
+    CAMINHO_MODELO, DIR_VIDEOS, DIR_LOGS, CAMINHO_SOCKET, FAMILIA_SOCKET, EH_WINDOWS,
+    ARQUIVO_BASELINE,
     INDICE_CAMERA, LARGURA, ALTURA,
     LIMIAR_CONFIANCA, LIMIAR_DESVIO_ANGULO, LIMIAR_QUEDA_RAZAO,
     DURACAO_CALIBRACAO, HISTORICO_TAMANHO, FRAMES_PARA_ALERTA,
@@ -221,8 +222,14 @@ def desenhar_pontos(frame, pontos):
 
 def abrir_camera():
     """Abre a webcam com as otimizações do Pi 3B. Retorna None se não abrir."""
-    # OTIMIZAÇÃO 5: backend V4L2 nativo.
-    cap = cv2.VideoCapture(INDICE_CAMERA, cv2.CAP_V4L2)
+    # OTIMIZAÇÃO 5: backend nativo de cada sistema (V4L2 no Linux/Pi).
+    if EH_WINDOWS:
+        backend = cv2.CAP_DSHOW
+    elif sys.platform.startswith("linux"):
+        backend = cv2.CAP_V4L2
+    else:
+        backend = cv2.CAP_ANY
+    cap = cv2.VideoCapture(INDICE_CAMERA, backend)
     if not cap.isOpened():
         cap.release()
         return None
@@ -896,13 +903,15 @@ class MonitorPostura:
     # ---------------- comandos (socket) ----------------
 
     def _servidor_comandos(self):
-        try:
-            os.remove(CAMINHO_SOCKET)
-        except OSError:
-            pass
-        servidor = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        if FAMILIA_SOCKET == socket.AF_UNIX:
+            try:
+                os.remove(CAMINHO_SOCKET)
+            except OSError:
+                pass
+        servidor = socket.socket(FAMILIA_SOCKET, socket.SOCK_STREAM)
         servidor.bind(CAMINHO_SOCKET)
-        os.chmod(CAMINHO_SOCKET, 0o600)  # só o próprio usuário manda comandos
+        if FAMILIA_SOCKET == socket.AF_UNIX:
+            os.chmod(CAMINHO_SOCKET, 0o600)  # só o próprio usuário manda comandos
         servidor.listen(4)
         servidor.settimeout(1.0)
 
@@ -979,9 +988,9 @@ class MonitorPostura:
 # =====================================================================
 
 def outra_instancia_rodando():
-    if not os.path.exists(CAMINHO_SOCKET):
+    if FAMILIA_SOCKET == socket.AF_UNIX and not os.path.exists(CAMINHO_SOCKET):
         return False
-    teste = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    teste = socket.socket(FAMILIA_SOCKET, socket.SOCK_STREAM)
     teste.settimeout(1.0)
     try:
         teste.connect(CAMINHO_SOCKET)
@@ -1014,7 +1023,8 @@ def main():
             sys.exit(f"Vídeo não encontrado: {args.video}")
 
     preview = args.preview
-    if preview and not os.environ.get("DISPLAY"):
+    # DISPLAY só existe no Linux; no Windows/macOS a janela abre direto.
+    if preview and sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):
         print("Aviso: --preview pedido, mas não há tela (DISPLAY vazio). Entre com `ssh -X`. "
               "Seguindo sem janela.", flush=True)
         preview = False
