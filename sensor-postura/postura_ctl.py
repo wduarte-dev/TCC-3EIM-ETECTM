@@ -20,7 +20,7 @@ import socket
 import subprocess
 
 from postura_config import (
-    CAMINHO_SOCKET, DIR_VIDEOS, listar_videos,
+    CAMINHO_SOCKET, FAMILIA_SOCKET, EH_WINDOWS, DIR_VIDEOS, listar_videos,
     DURACAO_CALIBRACAO, CONTAGEM_CALIBRACAO, CONTAGEM_GRAVACAO, GRAVACAO_MAX_S,
 )
 
@@ -28,7 +28,7 @@ NOME_SERVICO = "postura"
 
 
 def enviar(pedido):
-    cliente = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    cliente = socket.socket(FAMILIA_SOCKET, socket.SOCK_STREAM)
     cliente.settimeout(3.0)
     try:
         cliente.connect(CAMINHO_SOCKET)
@@ -203,6 +203,13 @@ def main():
 
     comando = sys.argv[1].lower()
     argumento = sys.argv[2] if len(sys.argv) > 2 else None
+
+    # Serviço/journal são do systemd (Linux). No Windows o monitor roda direto.
+    if EH_WINDOWS and comando in ("janela", "videocapture", "preview", "ver",
+                                  "log", "parar", "iniciar", "reiniciar"):
+        sys.exit("No Windows não há serviço (systemd). Rode o monitor direto:\n"
+                 "  python postura_servico.py --preview\n"
+                 "e use os outros comandos (status, recalibrar, gravar, live, video) normalmente.")
 
     if comando == "status":
         cmd_status()

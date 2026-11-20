@@ -5,6 +5,10 @@ comando de controle (postura_ctl.py).
 Ajuste os limiares AQUI — os dois arquivos leem deste mesmo lugar.
 """
 import os
+import socket
+import sys
+
+EH_WINDOWS = sys.platform == "win32"
 
 # Caminhos sempre relativos à pasta deste arquivo (e não à pasta de onde o
 # programa foi chamado). Isso é o que permite o systemd rodar o serviço de
@@ -19,9 +23,17 @@ DIR_LOGS = os.path.join(DIR_BASE, "logs")
 # boot novo, o sistema sempre aguarda `postura recalibrar`.
 ARQUIVO_BASELINE = os.path.join(DIR_BASE, "baseline.json")
 
-# Canal de comunicação entre o comando `postura` e o serviço (socket Unix).
-# Leva o UID no nome pra cada usuário ter o seu.
-CAMINHO_SOCKET = f"/tmp/postura-{os.getuid()}.sock"
+# Canal de comunicação entre o comando `postura` e o serviço.
+# Linux/macOS: socket Unix; leva o UID no nome pra cada usuário ter o seu.
+# Windows: o Python não expõe AF_UNIX, então usa TCP só na máquina local
+# (127.0.0.1, porta fixa). Quem usa o socket só precisa de FAMILIA_SOCKET e
+# CAMINHO_SOCKET; o formato do endereço muda sozinho conforme o sistema.
+if EH_WINDOWS:
+    FAMILIA_SOCKET = socket.AF_INET
+    CAMINHO_SOCKET = ("127.0.0.1", 47831)
+else:
+    FAMILIA_SOCKET = socket.AF_UNIX
+    CAMINHO_SOCKET = f"/tmp/postura-{os.getuid()}.sock"
 
 # --- Câmera ---
 INDICE_CAMERA = 0
