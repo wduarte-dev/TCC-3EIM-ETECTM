@@ -21,6 +21,9 @@ A variável `TCC_LOGS` troca a pasta.
 | `saude_AAAA-MM-DD.csv` | amostra (~5 s) | `tcc-saude` |
 | `eventos_AAAA-MM-DD.csv` | mudança (só quando algo muda) | pomodoro, postura e o próprio `tcc-saude` |
 
+O **CSV por quadro da postura** continua em `sensor-postura/logs/postura_AAAA-MM-DD.csv` (onde
+sempre esteve), agora com o mesmo relógio, a mesma linha de versão e a rotação abaixo.
+
 **Mesmo relógio:** todos os arquivos usam horário ISO **com fuso** (`2026-11-20T21:39:05.123-03:00`),
 pra juntar por horário no pandas.
 
@@ -74,14 +77,16 @@ junto = pd.merge_asof(saude.sort_values("data_hora"), ev.sort_values("data_hora"
 Um arquivo por dia. Ao abrir o do dia (e a cada 10 min), apaga os **mais antigos que 7 dias**;
 se o grupo passou do **teto**, apaga o mais antigo antes dos 7 dias (o de hoje nunca).
 
-| Grupo | Teto |
-|---|---|
-| `saude_*` + `eventos_*` | 100 MB |
+| Grupo | Pasta | Teto |
+|---|---|---|
+| `saude_*` + `eventos_*` | `~/tcc-logs/` | 100 MB |
+| `postura_*` (CSV por quadro) | `sensor-postura/logs/` | 300 MB |
 
 Arquivos antigos **não** são guardados pro TCC: pra guardar um período, copie antes.
 
 **Tamanho estimado (conta, não medido):** saúde ~1 MB/dia (~60 bytes × 17 mil amostras); eventos
-dependem de quanto a postura oscila (cada linha ~70 bytes).
+dependem de quanto a postura oscila (cada linha ~70 bytes); CSV por quadro ~12 MB por dia de 8 h
+de uso (~4 fps, ~100 bytes por linha).
 
 ## Log de saúde (`saude.py`, serviço `tcc-saude`)
 

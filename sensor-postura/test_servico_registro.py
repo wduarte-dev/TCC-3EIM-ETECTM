@@ -99,5 +99,36 @@ class TesteEventosDoServico(unittest.TestCase):
         self.assertEqual(ps.detalhe_estado("ATENCAO", 2.345), "ATENCAO fps=2.3")
 
 
+
+@unittest.skipIf(ps is None, "sem OpenCV/numpy")
+class TesteRotacaoCSVQuadros(unittest.TestCase):
+    def test_abre_o_dia_roda_e_grava_versao_e_fuso(self):
+        from datetime import date, timedelta
+        with tempfile.TemporaryDirectory() as pasta:
+            hoje = date.today()
+            for dias in (3, 8, 30):
+                with open(os.path.join(pasta, f"postura_{hoje - timedelta(days=dias)}.csv"), "w") as f:
+                    f.write("x\n")
+            log = ps.LogCSV(pasta, versao="abc1234")
+            log.registrar(data_hora=ps.agora_iso(), fonte="video", video="teste #2.mp4",
+                          status="CORRETA", angulo=1.23456)
+            log.fechar()
+            nomes = sorted(os.listdir(pasta))
+            self.assertEqual(nomes, sorted([f"postura_{hoje - timedelta(days=3)}.csv",
+                                            f"postura_{hoje}.csv"]))   # 8 e 30 dias saíram
+            caminho = os.path.join(pasta, f"postura_{hoje}.csv")
+            with open(caminho, encoding="utf-8") as f:
+                bruto = f.read().splitlines()
+            self.assertEqual(bruto[0], ",".join(ps.LogCSV.CABECALHO))
+            self.assertTrue(bruto[1].startswith("# versao_codigo=abc1234 processo=postura"))
+            linha = ler(caminho)[0]
+            self.assertEqual((linha["video"], linha["angulo"]), ("teste n.2.mp4", "1.235"))
+            self.assertRegex(linha["data_hora"], r"T\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d$")
+
+    def test_teto_de_300_mb_do_grupo(self):
+        self.assertEqual(ps.TETO_QUADROS, 300 * 1024 * 1024)
+        self.assertEqual(ps.GRUPO_QUADROS, ("postura",))
+
+
 if __name__ == "__main__":
     unittest.main()

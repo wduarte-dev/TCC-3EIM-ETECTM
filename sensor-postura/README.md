@@ -18,7 +18,7 @@ pelo comando `postura`.
 | `movenet_lightning.tflite` | Modelo de detecção de pose |
 | `main-otimizado-rpi3b.py` | Versão anterior (com janela, ENTER pra calibrar). Mantida como referência |
 | `videos/` | Vídeos de teste (não vão pro Git) |
-| `logs/` | Um CSV por dia com todas as medições (não vai pro Git) |
+| `logs/` | Um CSV por dia com todas as medições, **apagado depois de 7 dias** (não vai pro Git) |
 | `fotos/` | Última `postura foto` (não vai pro Git) |
 | `baseline.json` | Última calibração ao vivo (gerado sozinho, não vai pro Git) |
 
@@ -208,6 +208,13 @@ Também dá pra rodar manual: `python postura_servico.py --video nome.mp4`
   nada; vazia se a outra orelha não apareceu.
 - Se o arquivo do dia já existia com as colunas antigas, o serviço começa `postura_AAAA-MM-DD_v2.csv`
   em vez de misturar formatos.
+- `data_hora` em ISO **com fuso** (`2026-11-21T14:03:12.345-03:00`), o mesmo relógio do log de
+  saúde e dos eventos. Arquivos antigos (até 20/11/2026) estão sem o fuso.
+- Cada abertura do arquivo escreve `# versao_codigo=<hash> ...` (qual código gerou os dados). Ler
+  com `pd.read_csv(arquivo, comment="#")`.
+- **Rotação:** ao abrir o arquivo do dia (e a cada 10 min) apaga os de **mais de 7 dias** e, se a
+  pasta passar de **300 MB**, o mais antigo antes disso. **Pra guardar um período (ex.: a validação
+  de 18/11), copie o arquivo pra fora de `logs/` antes.**
 
 ## Eventos (`~/tcc-logs/eventos_AAAA-MM-DD.csv`)
 

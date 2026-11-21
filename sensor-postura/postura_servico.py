@@ -62,7 +62,10 @@ from postura_logica import (
 
 sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)),
                                                  os.pardir, "registro")))
-from registro_comum import RegistroEventos, ORIGEM_POSTURA  # noqa: E402
+from registro_comum import (  # noqa: E402
+    RegistroEventos, ORIGEM_POSTURA, GRUPO_QUADROS, TETO_QUADROS, MAX_DIAS,
+    INTERVALO_CONFERE_TETO_S, agora_iso, limpar_antigos, linha_versao, versao_codigo,
+)
 
 # Estados em que o fps faz sentido no detalhe do evento (a postura está sendo analisada)
 STATUS_COM_FPS = ("CORRETA", "ATENCAO", "ALERTA", "SEM_USUARIO")
@@ -245,7 +248,10 @@ def abrir_camera():
 
 
 # =====================================================================
-# LOG EM CSV — um arquivo por dia em logs/
+# LOG EM CSV — um arquivo por dia em logs/, com rotação (ver registro/README.md):
+# apaga os de mais de 7 dias e, passando de 300 MB, o mais antigo antes disso.
+# Horário ISO com fuso (mesmo relógio da saúde e dos eventos) e uma linha
+# "# versao_codigo=..." a cada abertura: ler com pd.read_csv(..., comment="#").
 # =====================================================================
 
 class LogCSV:
@@ -257,19 +263,26 @@ class LogCSV:
         "status_exibido", "contador", "perdidos_seguidos", "ruins_medidos", "razao_cb",
     ]
 
-    def __init__(self, pasta):
+    def __init__(self, pasta, versao=None):
         self.pasta = pasta
         os.makedirs(pasta, exist_ok=True)
+        self.versao = versao if versao is not None else versao_codigo()
         self.data_atual = None
         self.arquivo = None
         self.escritor = None
         self.ultimo_flush = 0.0
+        self.ultima_conferencia = 0.0
 
     def _garantir_arquivo(self):
         hoje = datetime.now().strftime("%Y-%m-%d")
         if hoje == self.data_atual:
+            if time.monotonic() - self.ultima_conferencia > INTERVALO_CONFERE_TETO_S:
+                self.ultima_conferencia = time.monotonic()
+                limpar_antigos(self.pasta, GRUPO_QUADROS, max_dias=MAX_DIAS, teto_bytes=TETO_QUADROS)
             return
         self.fechar()
+        limpar_antigos(self.pasta, GRUPO_QUADROS, max_dias=MAX_DIAS, teto_bytes=TETO_QUADROS)
+        self.ultima_conferencia = time.monotonic()
         caminho = os.path.join(self.pasta, f"postura_{hoje}.csv")
         versao = 2
         while os.path.exists(caminho) and not self._mesmo_cabecalho(caminho):
@@ -281,6 +294,7 @@ class LogCSV:
         self.escritor = csv.writer(self.arquivo)
         if novo:
             self.escritor.writerow(self.CABECALHO)
+        self.arquivo.write(linha_versao("postura", self.versao))
         self.data_atual = hoje
 
     def _mesmo_cabecalho(self, caminho):
@@ -298,6 +312,8 @@ class LogCSV:
                 valor = campos.get(coluna, "")
                 if isinstance(valor, float):
                     valor = f"{valor:.3f}"
+                elif isinstance(valor, str):
+                    valor = valor.replace("#", "n.")   # "#" viraria comentário no pandas
                 linha.append("" if valor is None else valor)
             self.escritor.writerow(linha)
             agora = time.time()
@@ -377,8 +393,8 @@ class MonitorPostura:
 
     def __init__(self, preview=False, video_inicial=None):
         self.detector = DetectorPostura()
-        self.log = LogCSV(DIR_LOGS)
         self.eventos = RegistroEventos("postura")
+        self.log = LogCSV(DIR_LOGS, versao=self.eventos.versao)
         self._status_evento = None   # último status gravado no arquivo de eventos
         self.comandos = queue.Queue()
         self.lock = threading.Lock()
@@ -707,7 +723,7 @@ class MonitorPostura:
         )
         self._registrar_fim("calibracao", ok=True, msg=msg)
         self.log.registrar(
-            data_hora=datetime.now().isoformat(timespec="milliseconds"),
+            data_hora=agora_iso(),
             fonte=fonte, video=video or "", status="CALIBRADO",
             baseline_angulo=baseline_angulo, baseline_razao=baseline_razao,
         )
@@ -922,7 +938,7 @@ class MonitorPostura:
             with self.lock:
                 fonte, video = self.estado["fonte"], self.estado["video"]
             self.log.registrar(
-                data_hora=datetime.now().isoformat(timespec="milliseconds"),
+                data_hora=agora_iso(),
                 fonte=fonte, video=video or "",
                 status=resultado.status,             # o que o quadro mostrou (SEM_USUARIO honesto)
                 angulo=angulo, razao_pescoco=razao,
