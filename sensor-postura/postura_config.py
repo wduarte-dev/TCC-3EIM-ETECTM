@@ -4,6 +4,7 @@ comando de controle (postura_ctl.py).
 
 Ajuste os limiares AQUI — os dois arquivos leem deste mesmo lugar.
 """
+import math
 import os
 import socket
 import sys
@@ -47,7 +48,12 @@ LIMIAR_DESVIO_ANGULO = 12.0   # Graus de desvio lateral tolerados em relação �
 LIMIAR_QUEDA_RAZAO = 0.12     # Queda tolerada na razão pescoço/ombros (0.12 = 12%)
 DURACAO_CALIBRACAO = 5        # segundos coletando amostras da postura correta
 HISTORICO_TAMANHO = 5         # tamanho da média móvel
-FRAMES_PARA_ALERTA = 15       # ALERTA quando o contador de postura ruim PASSA disso (16º quadro)
+# ALERTA quando o contador de postura ruim PASSA disso (61º quadro). VALOR PROVISÓRIO (20/11):
+# mirado em 10 a 20 s de má postura antes do ALERTA. Conta com o fps medido no Pi em 18–20/11
+# (~4,1 fps, com throttling): 61 ÷ 4,1 ≈ 15 s. O fps varia com a carga, então o tempo real é
+# uma FAIXA, não um valor fixo. Nenhuma fonte da literatura pra este valor (escolha do projeto).
+# Antes: 15 (16º quadro, ≈ 3,7 s a 4,1 fps).
+FRAMES_PARA_ALERTA = 60
 
 # --- Contador de ALERTA que usa as perdas de detecção (T3, "informative missingness") ---
 # Perder os pontos (SEM_USUARIO) no meio de uma sequência ruim é indício de que a pessoa
@@ -55,10 +61,13 @@ FRAMES_PARA_ALERTA = 15       # ALERTA quando o contador de postura ruim PASSA d
 # VALORES PROVISÓRIOS, escolha do projeto, a definir com os dados do estudo (rajadas de
 # SEM_USUARIO dentro de postura ruim). Origem:
 #   PERDAS_TOLERADAS: no simulador aprovado eram 2 com escala de 6 quadros (1/3); 1/3 de 15 = 5.
-#   MINIMO_RUINS_MEDIDOS: o ALERTA (16 quadros) não pode vir majoritariamente de quadros
-#   perdidos → pelo menos metade medida = 8.
+#   MINIMO_RUINS_MEDIDOS: o ALERTA não pode vir majoritariamente de quadros perdidos →
+#   pelo menos METADE dos quadros do ALERTA (FRAMES_PARA_ALERTA + 1) tem que ser medida.
+#   É regra de definição do método (como a gente mede), não valor empírico; acompanha o
+#   limiar sozinha: 16 quadros → 8 (valor antigo); 61 quadros → 31.
+#   PERDAS_TOLERADAS continua 5 (derivado do limiar antigo; não é proporcional ao limiar).
 PERDAS_TOLERADAS = 5          # N: perdas SEGUIDAS que ainda contam como indício (em quadros)
-MINIMO_RUINS_MEDIDOS = 8      # M: quadros ruins MEDIDOS exigidos pra afirmar ALERTA
+MINIMO_RUINS_MEDIDOS = math.ceil((FRAMES_PARA_ALERTA + 1) / 2)   # M: metade, arredondada pra cima
 
 # --- Comportamento headless ---
 CONTAGEM_CALIBRACAO = 10      # segundos pra se ajeitar depois do `postura recalibrar` (ao vivo)
