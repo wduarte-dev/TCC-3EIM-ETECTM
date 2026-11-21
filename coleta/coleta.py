@@ -12,8 +12,9 @@ Uso (de dentro de coleta/):
     python coleta.py --camera 1           # outra câmera (ex.: a Bresser no notebook)
     python coleta.py --video teste.mp4    # testar sem câmera, com um vídeo
 
-Teclas na janela: ESPAÇO avança/aceita, R repete a etapa, C troca de câmera
-(só no enquadramento), ESC sai (o que já foi gravado fica salvo).
+Teclas na janela: ESPAÇO avança/aceita, R repete a etapa, P pula a etapa (não vale na 1),
+D = o participante desiste, C troca de câmera (só no enquadramento), ESC sai. Em todos os
+casos o que já foi gravado fica salvo. Ao fechar, o terminal pede as observações finais.
 """
 import argparse
 import csv
@@ -32,17 +33,23 @@ import numpy as np
 import coleta_logica as cl   # coloca sensor-postura/ no sys.path
 from coleta_logica import (
     Sessao, ETAPAS, METRICAS, NOMES_PONTOS, ENQUADRAR, INSTRUCAO, CONTAGEM, GRAVANDO, REVISAO, FIM,
+    FIM_CAMERA, FIM_VIDEO,
 )
 from postura_config import (
     CAMINHO_MODELO, LARGURA, ALTURA, LIMIAR_CONFIANCA, LIMIAR_DESVIO_ANGULO, LIMIAR_QUEDA_RAZAO,
     EH_WINDOWS,
 )
 
-VERSAO = "1.0 (20/11/2026)"
+VERSAO_PROGRAMA = "2.0 (20/11/2026)"
 DIR_COLETA = os.path.dirname(os.path.realpath(__file__))
 DIR_DADOS_PADRAO = os.path.join(DIR_COLETA, "dados")
+# Versão do código quando não há .git (repo baixado como zip): o GitHub gera o zip com
+# `git archive`, que troca o marcador abaixo pelo hash do commit (atributo export-subst
+# no .gitattributes). Num clone o arquivo fica com o marcador cru e vale o `git`.
+ARQUIVO_VERSAO = os.path.join(DIR_COLETA, "VERSAO")
 NOME_JANELA = "Coleta - estudo de postura (TCC)"
 LARGURA_PAINEL = 480
+MARGEM_PAINEL = 12
 
 VERDE, VERMELHO, AMARELO, BRANCO, CINZA = (0, 200, 0), (0, 0, 230), (0, 220, 255), (255, 255, 255), (150, 150, 150)
 
@@ -114,8 +121,23 @@ def _fmt(v):
     return v
 
 
+def _cabecalho_atual(caminho):
+    with open(caminho, newline="", encoding="utf-8") as arq:
+        return next(csv.reader(arq), None)
+
+
 def _abrir_csv(caminho, cabecalho):
+    """Abre pra acrescentar. Se o arquivo já existe com OUTRO cabeçalho (formato antigo da
+    coleta, ex.: antes da coluna `motivo`), ele é renomeado pra *_formato_antigo_<data>.csv
+    (nada se perde) e um novo começa; acrescentar linhas com outras colunas quebraria o CSV."""
     novo = not os.path.exists(caminho) or os.path.getsize(caminho) == 0
+    if not novo and _cabecalho_atual(caminho) != list(cabecalho):
+        raiz, ext = os.path.splitext(caminho)
+        antigo = f"{raiz}_formato_antigo_{datetime.now():%Y%m%d-%H%M%S}{ext}"
+        os.replace(caminho, antigo)
+        print(f"  Aviso: {os.path.basename(caminho)} tinha o formato antigo; "
+              f"guardado como {os.path.basename(antigo)}")
+        novo = True
     arq = open(caminho, "a", newline="", encoding="utf-8")
     escritor = csv.writer(arq)
     if novo:
@@ -126,21 +148,22 @@ def _abrir_csv(caminho, cabecalho):
 class RegistroCSV:
     """
     dados/quadros_<ID>_<data>.csv  um por pessoa: cada quadro gravado (todas as tentativas)
-    dados/etapas.csv               uma linha por tentativa de etapa (aceita = 1 ou 0)
+    dados/etapas.csv               uma linha por tentativa de etapa (aceita = 1 ou 0, motivo)
     dados/participantes.csv        uma linha por pessoa: metadados + baseline + ambiente
     """
     CAB_QUADROS = (["participante", "etapa", "etapa_chave", "tentativa", "t_s", "quadro", "valido",
                     "angulo", "razao", "razao_cb", "a_px", "b_px", "c_px",
                     "desvio_angulo", "queda_razao_pct", "ruim_quadro"]
                    + [f"{n}_{c}" for n in NOMES_PONTOS for c in ("x", "y", "conf")])
-    CAB_ETAPAS = (["participante", "etapa", "etapa_chave", "tentativa", "aceita", "data_hora",
+    CAB_ETAPAS = (["participante", "etapa", "etapa_chave", "tentativa", "aceita", "motivo", "data_hora",
                    "n_total", "n_validos", "pct_sem_usuario", "fps_medio", "pct_ruim_quadro", "n_cb"]
                   + [f"{m}_{s}" for m in METRICAS for s in ("mediana", "dp")]
                   + ["baseline_angulo", "baseline_razao"])
     CAB_PARTICIPANTES = [
-        "participante", "data_hora_inicio", "data_hora_fim", "completa", "etapas_aceitas",
-        "termo_ok", "oculos", "cabelo_cobre_orelha", "cadeira", "distancia_camera_cm",
-        "altura_camera", "notebook", "observacoes",
+        "participante", "data_hora_inicio", "data_hora_fim", "completa", "motivo_fim",
+        "etapas_aceitas", "etapas_puladas",
+        "termo_ok", "sexo", "altura_pessoa_cm", "oculos", "cabelo_cobre_orelha", "cadeira",
+        "distancia_camera_cm", "altura_camera", "webcam", "notebook", "observacoes", "observacoes_fim",
         "baseline_angulo", "baseline_razao", "baseline_b_px", "baseline_cb",
         "fonte", "fps_medio", "sistema", "python", "opencv", "interpretador", "modelo_md5",
         "limiar_confianca", "limiar_angulo", "limiar_queda", "duracao_etapa_s", "contagem_s",
@@ -176,13 +199,13 @@ class RegistroCSV:
         )] + pontos)
         self._arq_q.flush()
 
-    def etapa(self, sessao, resumo, aceita):
+    def etapa(self, sessao, resumo, aceita, motivo=""):
         self.total_quadros += resumo["n_total"]
         if resumo["fps_medio"]:
             self.tempo_gravado += resumo["n_total"] / resumo["fps_medio"]
         base = resumo["baseline"] or (None, None)
         self._csv_e.writerow([_fmt(v) for v in (
-            [self.participante, sessao.etapa.num, sessao.etapa.chave, sessao.tentativa, aceita,
+            [self.participante, sessao.etapa.num, sessao.etapa.chave, sessao.tentativa, aceita, motivo,
              datetime.now().isoformat(timespec="seconds"), resumo["n_total"], resumo["n_validos"],
              resumo["pct_sem_usuario"], resumo["fps_medio"], resumo["pct_ruim_quadro"], resumo["n_cb"]]
             + [resumo[f"{m}_{s}"] for m in METRICAS for s in ("mediana", "dp")]
@@ -195,7 +218,8 @@ class RegistroCSV:
         linha = dict(meta, **ambiente)
         linha.update(
             participante=self.participante, data_hora_fim=datetime.now().isoformat(timespec="seconds"),
-            completa=sessao.completa, etapas_aceitas="|".join(sessao.aceitas),
+            completa=sessao.completa, motivo_fim=sessao.motivo_fim,
+            etapas_aceitas="|".join(sessao.aceitas), etapas_puladas="|".join(sessao.puladas),
             baseline_angulo=base[0], baseline_razao=base[1],
             baseline_b_px=sessao.baseline_b_px, baseline_cb=sessao.baseline_cb, fps_medio=fps,
         )
@@ -213,13 +237,16 @@ class RegistroCSV:
 # =====================================================================
 
 def proximo_id(pasta):
+    """Próximo P01, P02... livre: olha os participantes*.csv (inclusive os de formato antigo)
+    e os quadros_P*.csv já gravados, pra nunca repetir um ID."""
     usados = set()
-    caminho = os.path.join(pasta, "participantes.csv")
-    if os.path.exists(caminho):
-        with open(caminho, encoding="utf-8") as arq:
-            usados |= {linha["participante"] for linha in csv.DictReader(arq)}
     if os.path.isdir(pasta):
-        usados |= {n.split("_")[1] for n in os.listdir(pasta) if n.startswith("quadros_P")}
+        for nome in os.listdir(pasta):
+            if nome.startswith("participantes") and nome.endswith(".csv"):
+                with open(os.path.join(pasta, nome), newline="", encoding="utf-8") as arq:
+                    usados |= {linha.get("participante", "") for linha in csv.DictReader(arq)}
+            elif nome.startswith("quadros_P"):
+                usados.add(nome.split("_")[1])
     n = 1
     while f"P{n:02d}" in usados:
         n += 1
@@ -227,35 +254,66 @@ def proximo_id(pasta):
 
 
 def _sim_nao(pergunta, entrada):
+    return _opcao(pergunta, {"s": "s", "sim": "s", "n": "n", "nao": "n", "não": "n"}, "s ou n", entrada)
+
+
+def _opcao(pergunta, opcoes, dica, entrada):
+    """Pergunta fechada: repete até vir uma das opções (dict resposta → valor gravado)."""
     while True:
-        r = entrada(f"{pergunta} (s/n): ").strip().lower()
-        if r in ("s", "sim"):
-            return "s"
-        if r in ("n", "nao", "não"):
-            return "n"
-        print("  responda s ou n")
+        r = entrada(f"{pergunta} ({dica}): ").strip().lower()
+        if r in opcoes:
+            return opcoes[r]
+        print(f"  responda {dica}")
+
+
+def _numero(pergunta, minimo, maximo, entrada):
+    """Número validado (aceita vírgula). Fora da faixa pede de novo: pega erro de digitação."""
+    while True:
+        r = entrada(f"{pergunta}: ").strip().replace(",", ".")
+        try:
+            v = float(r)
+        except ValueError:
+            print("  digite so o numero")
+            continue
+        if minimo <= v <= maximo:
+            return int(v) if v.is_integer() else v
+        print(f"  fora da faixa esperada ({minimo} a {maximo}); confira e digite de novo")
 
 
 def perguntar_metadados(pasta, notebook_padrao, entrada=input):
-    sugestao, usados = proximo_id(pasta)
-    print("\n=== Participante (ID anonimo: nada de nome) ===")
-    while True:
-        pid = entrada(f"ID [{sugestao}]: ").strip().upper() or sugestao
-        if pid not in usados or _sim_nao(f"  {pid} ja existe nos dados. Usar mesmo assim?", entrada) == "s":
-            break
+    pid, _ = proximo_id(pasta)   # ID automático: ninguém digita (o próximo livre)
+    print(f"\n=== Participante {pid} (ID anonimo automatico: nada de nome) ===")
+    print("Lembre o participante: pode PULAR uma etapa (P) ou PARAR a qualquer momento (D),")
+    print("sem precisar justificar. O que ja foi gravado fica salvo.")
     meta = dict(participante=pid, data_hora_inicio=datetime.now().isoformat(timespec="seconds"))
     meta["termo_ok"] = _sim_nao("Termo de participacao aceito", entrada)
     if meta["termo_ok"] == "n":
         print("  AVISO: sem termo aceito. Confira com o orientador antes de usar estes dados.")
+    meta["sexo"] = _opcao("Sexo", {"m": "mulher", "mulher": "mulher", "h": "homem", "homem": "homem"},
+                          "m = mulher, h = homem", entrada)
+    meta["altura_pessoa_cm"] = _numero("Altura da pessoa (cm, ex.: 172)", 100, 230, entrada)
     meta["oculos"] = _sim_nao("Usa oculos agora", entrada)
     meta["cabelo_cobre_orelha"] = _sim_nao("Cabelo cobre a orelha", entrada)
     meta["cadeira"] = entrada("Cadeira (ex.: escolar sem encosto, com encosto, gamer): ").strip()
     meta["distancia_camera_cm"] = entrada("Distancia aproximada camera-pessoa (cm): ").strip()
-    meta["altura_camera"] = entrada("Altura da camera (ex.: na altura dos olhos, abaixo, acima): ").strip()
+    meta["altura_camera"] = entrada("Altura da camera (texto livre, ex.: na altura dos olhos, abaixo, "
+                                    "acima; quanto do corpo aparece): ").strip()
+    meta["webcam"] = _opcao("Webcam", {"n": "notebook", "notebook": "notebook", "t": "tcc", "tcc": "tcc"},
+                            "n = do notebook, t = do TCC (Bresser)", entrada)
     nb = entrada(f"Notebook [{notebook_padrao}]: ").strip()
     meta["notebook"] = nb or notebook_padrao
     meta["observacoes"] = entrada("Observacoes (enter = nenhuma): ").strip()
     return meta
+
+
+def perguntar_observacoes_fim(entrada=input):
+    """Depois de fechar a janela: o que aconteceu na coleta (cabelo na orelha, desconforto,
+    etapa repetida...), pra não depender de memória. Enter = nenhuma, e encerra."""
+    print("\nJanela fechada.")
+    try:
+        return entrada("Observacoes finais (o que aconteceu na coleta; enter = nenhuma): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return ""
 
 
 def _md5(caminho):
@@ -265,12 +323,29 @@ def _md5(caminho):
     return h.hexdigest()[:12]
 
 
-def _versao_codigo():
+def _git(*args):
+    return subprocess.run(["git", *args], cwd=DIR_COLETA, capture_output=True, text=True,
+                          timeout=3).stdout.strip()
+
+
+def _versao_codigo(arquivo_versao=ARQUIVO_VERSAO):
+    """Hash curto do commit. Ordem: (1) `git` (clone), com "+alterado" se algum arquivo
+    versionado foi mexido sem commit (senão o hash "mentiria"); (2) o arquivo VERSAO (zip do
+    GitHub, sem .git); (3) "desconhecida"."""
     try:
-        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=DIR_COLETA, capture_output=True,
-                              text=True, timeout=3).stdout.strip() or "desconhecida"
+        h = _git("rev-parse", "--short", "HEAD")
+        if h:
+            return h + ("+alterado" if _git("status", "--porcelain", "--untracked-files=no") else "")
     except (OSError, subprocess.SubprocessError):
-        return "desconhecida"
+        pass
+    try:
+        with open(arquivo_versao, encoding="utf-8") as arq:
+            v = arq.read().strip()
+        if v and "$Format" not in v:     # marcador cru = não veio de um zip
+            return v
+    except OSError:
+        pass
+    return "desconhecida"
 
 
 # =====================================================================
@@ -281,8 +356,27 @@ def _ascii(texto):
     return unicodedata.normalize("NFKD", str(texto)).encode("ascii", "ignore").decode("ascii")
 
 
-def _texto(img, texto, y, cor=BRANCO, escala=0.5, x=12, grossura=1):
+def _texto(img, texto, y, cor=BRANCO, escala=0.5, x=MARGEM_PAINEL, grossura=1):
     cv2.putText(img, _ascii(texto), (x, y), cv2.FONT_HERSHEY_SIMPLEX, escala, cor, grossura, cv2.LINE_AA)
+
+
+def quebrar_linha(texto, largura_px=LARGURA_PAINEL - 2 * MARGEM_PAINEL, escala=0.5, grossura=1):
+    """Quebra por palavra o que não cabe na largura do painel (medido com a própria fonte)."""
+    linhas, atual = [], ""
+    for palavra in _ascii(texto).split():
+        tentativa = f"{atual} {palavra}".strip()
+        largura = cv2.getTextSize(tentativa, cv2.FONT_HERSHEY_SIMPLEX, escala, grossura)[0][0]
+        if atual and largura > largura_px:
+            linhas.append(atual)
+            atual = palavra
+        else:
+            atual = tentativa
+    return linhas + ([atual] if atual else [])
+
+
+def _saidas(sessao):
+    """Rodapé com as saídas do participante (pular não vale na etapa 1)."""
+    return "P = pular etapa | D = desistir" if sessao.pode_pular() else "D = desistir"
 
 
 def desenhar_pontos(frame, kps, analise):
@@ -335,22 +429,26 @@ def montar_tela(frame, kps, analise, sessao, agora, participante, fps, fonte):
         _texto(painel, etapa.titulo, y, AMARELO, 0.6, grossura=2)
         y += 34
         for linha in etapa.instrucoes:
-            _texto(painel, linha, y)
-            y += 24
+            for pedaco in quebrar_linha(linha):
+                _texto(painel, pedaco, y)
+                y += 24
         if sessao.tentativa > 1:
             _texto(painel, f"(tentativa {sessao.tentativa})", y + 10, CINZA)
-        y = h - 50
-        _texto(painel, f"Grava {sessao.duracao_s:g} s depois de {sessao.contagem_s:g} s", y, CINZA)
-        _texto(painel, "ESPACO = gravar | ESC = sair", y + 26, AMARELO, 0.6, grossura=2)
+        y = h - 76
+        _texto(painel, _saidas(sessao), y, CINZA)
+        _texto(painel, f"Grava {sessao.duracao_s:g} s depois de {sessao.contagem_s:g} s", y + 26, CINZA)
+        _texto(painel, "ESPACO = gravar | ESC = sair", y + 52, AMARELO, 0.6, grossura=2)
     elif sessao.estado == CONTAGEM:
         _texto(painel, etapa.titulo, y, AMARELO, 0.6, grossura=2)
         _texto(painel, "Assuma a pose e fique parado", y + 50, BRANCO, 0.6)
         _texto(painel, f"{sessao.restante_s(agora):.0f}", y + 160, AMARELO, 3.0, x=170, grossura=5)
+        _texto(painel, _saidas(sessao), h - 24, CINZA)
     elif sessao.estado == GRAVANDO:
         _texto(painel, etapa.titulo, y, AMARELO, 0.6, grossura=2)
         _texto(painel, f"GRAVANDO {sessao.restante_s(agora):.1f} s", y + 60, VERMELHO, 0.9, grossura=2)
         _texto(painel, f"quadros: {sessao.gravados} (validos {sessao.gravados_validos})", y + 100)
         cv2.circle(video, (24, 24), 10, VERMELHO, -1)
+        _texto(painel, _saidas(sessao), h - 24, CINZA)
     elif sessao.estado == REVISAO:
         r = sessao.resumo
         _texto(painel, f"{etapa.titulo}: resultado", y, AMARELO, 0.55, grossura=2)
@@ -369,13 +467,21 @@ def montar_tela(frame, kps, analise, sessao, agora, participante, fps, fonte):
         aviso = sessao.aviso_revisao()
         if aviso:
             _texto(painel, aviso, y + 14, AMARELO, 0.45)
-        y = h - 50
-        _texto(painel, "R = repetir esta etapa", y, CINZA)
+        y = h - 76
+        _texto(painel, _saidas(sessao), y, CINZA)
+        _texto(painel, "R = repetir esta etapa", y + 26, CINZA)
+        y += 26
         if sessao.pode_aceitar():
             _texto(painel, "ESPACO = aceitar e seguir", y + 26, VERDE, 0.6, grossura=2)
     elif sessao.estado == FIM:
-        _texto(painel, "FIM DESTA PESSOA", y, VERDE, 0.8, grossura=2)
-        _texto(painel, "Dados salvos. Feche ou aperte ESC.", y + 40)
+        if sessao.motivo_fim == cl.FIM_DESISTIU:
+            _texto(painel, "PARTICIPANTE PAROU", y, AMARELO, 0.8, grossura=2)
+        else:
+            _texto(painel, "FIM DESTA PESSOA", y, VERDE, 0.8, grossura=2)
+        _texto(painel, f"Etapas aceitas: {len(sessao.aceitas)}/{len(ETAPAS)}"
+                       + (f" | puladas: {len(sessao.puladas)}" if sessao.puladas else ""), y + 40)
+        _texto(painel, "Dados salvos. Aperte ESC e escreva", y + 70)
+        _texto(painel, "as observacoes finais no terminal.", y + 94)
     return np.hstack([video, painel])
 
 
@@ -383,7 +489,8 @@ def montar_tela(frame, kps, analise, sessao, agora, participante, fps, fonte):
 # Laço principal
 # =====================================================================
 
-TECLAS = {32: "espaco", ord("r"): "r", ord("R"): "r", 27: "sair"}
+TECLAS = {32: "espaco", ord("r"): "r", ord("R"): "r", ord("p"): "pular", ord("P"): "pular",
+          ord("d"): "desistir", ord("D"): "desistir", 27: "sair"}
 
 
 def rodar_janela(sessao, detector, cap, fonte, args, participante):
@@ -396,7 +503,7 @@ def rodar_janela(sessao, detector, cap, fonte, args, participante):
             falhas += 1
             if args.video or falhas > 60:
                 print("Video acabou." if args.video else "Erro: a camera parou de entregar quadros.")
-                sessao.tecla("sair", time.monotonic())
+                sessao.encerrar(time.monotonic(), FIM_VIDEO if args.video else FIM_CAMERA)
                 break
             continue
         falhas = 0
@@ -425,13 +532,15 @@ def rodar_janela(sessao, detector, cap, fonte, args, participante):
                 cap, fonte = abrir_fonte(camera, mjpg=args.mjpg)
                 if cap is None:
                     print(f"Erro: {fonte}")
-                    sessao.tecla("sair", agora)
+                    sessao.encerrar(agora, FIM_CAMERA)
                     break
             print(f"Fonte: {fonte}")
             continue
+        if sessao.estado == FIM and k == 27:     # já acabou: ESC só fecha a janela
+            break
         if k in TECLAS:
             sessao.tecla(TECLAS[k], agora)
-        if sessao.estado == FIM and k == 27:
+        if k == 27:                              # ESC no meio: encerra (motivo "interrompida")
             break
     if cap is not None:
         cap.release()
@@ -444,7 +553,7 @@ def main():
     ap.add_argument("--camera", type=int, default=0, help="índice da câmera (padrão 0)")
     ap.add_argument("--video", help="usar um vídeo em vez da câmera (teste)")
     ap.add_argument("--duracao", type=float, default=5.0, help="segundos gravados por etapa (padrão 5)")
-    ap.add_argument("--contagem", type=float, default=2.0, help="segundos pra assumir a pose (padrão 2)")
+    ap.add_argument("--contagem", type=float, default=5.0, help="segundos pra assumir a pose (padrão 5)")
     ap.add_argument("--dados", default=DIR_DADOS_PADRAO, help="pasta dos CSV (padrão coleta/dados)")
     ap.add_argument("--mjpg", action="store_true", help="pedir MJPG à câmera (a Bresser não tem)")
     ap.add_argument("--notebook", default=platform.node(), help="nome/modelo do notebook")
@@ -467,18 +576,24 @@ def main():
         opencv=cv2.__version__, interpretador=detector.interpretador, modelo_md5=_md5(CAMINHO_MODELO),
         limiar_confianca=LIMIAR_CONFIANCA, limiar_angulo=LIMIAR_DESVIO_ANGULO,
         limiar_queda=LIMIAR_QUEDA_RAZAO, duracao_etapa_s=args.duracao, contagem_s=args.contagem,
-        versao_programa=VERSAO, versao_codigo=_versao_codigo(),
+        versao_programa=VERSAO_PROGRAMA, versao_codigo=_versao_codigo(),
     )
     registro = RegistroCSV(args.dados, meta["participante"])
     sessao = Sessao(registro, duracao_s=args.duracao, contagem_s=args.contagem)
-    print("\nJanela aberta. ESPACO avanca, R repete, C troca de camera (no enquadramento), ESC sai.")
+    print(f"  versao do codigo: {ambiente['versao_codigo']}")
+    print("\nJanela aberta. ESPACO avanca, R repete, P pula a etapa, D = participante desiste,")
+    print("C troca de camera (no enquadramento), ESC sai.")
     try:
         ambiente["fonte"] = rodar_janela(sessao, detector, cap, fonte, args, meta["participante"])
+        # ANTES do finally, que grava a linha do participante (senão a observação não entra)
+        meta["observacoes_fim"] = perguntar_observacoes_fim()
     finally:
         ambiente.setdefault("fonte", fonte)
         registro.participante_fim(sessao, meta, ambiente)
         registro.fechar()
-        situacao = "COMPLETA" if sessao.completa else f"INCOMPLETA ({len(sessao.aceitas)}/{len(ETAPAS)} etapas)"
+        situacao = ("COMPLETA" if sessao.completa else
+                    f"INCOMPLETA ({len(sessao.aceitas)}/{len(ETAPAS)} etapas aceitas, "
+                    f"{len(sessao.puladas)} puladas, motivo: {sessao.motivo_fim})")
         print(f"\n{meta['participante']}: {situacao}. Dados em {args.dados}")
 
 
