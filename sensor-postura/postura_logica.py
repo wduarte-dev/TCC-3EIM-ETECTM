@@ -7,13 +7,14 @@ com pontos sintéticos, sem o Pi (ver test_postura_logica.py).
 Os limiares, a média móvel e a regra de um quadro são os mesmos do código
 antigo (T1, provado por teste). O contador de ALERTA mudou de propósito no T3:
 as perdas de detecção no meio de uma sequência ruim passam a contar como indício.
+E em 20/11: o ALERTA só sai depois de QUADROS_PARA_SAIR_ALERTA quadros bons seguidos.
 """
 import math
 from collections import deque, namedtuple
 
 from postura_config import (
     LIMIAR_DESVIO_ANGULO, LIMIAR_QUEDA_RAZAO, HISTORICO_TAMANHO, FRAMES_PARA_ALERTA,
-    PERDAS_TOLERADAS, MINIMO_RUINS_MEDIDOS,
+    PERDAS_TOLERADAS, MINIMO_RUINS_MEDIDOS, QUADROS_PARA_SAIR_ALERTA,
 )
 
 CORRETA = "CORRETA"
@@ -144,12 +145,19 @@ class AvaliadorPostura:
                         (saiu do enquadramento)
         ALERTA quando c > K E medidos >= M (trava: o alerta não pode vir
         majoritariamente de quadros perdidos). Senão, ruim = ATENCAO.
+
+    Saída do ALERTA (S = QUADROS_PARA_SAIR_ALERTA; 0 desliga):
+        depois que entrou em ALERTA, a tela fica em ALERTA até S quadros CORRETOS
+        seguidos. Ruim ou perda no meio reinicia a contagem. No S-ésimo, zera tudo
+        (fim do episódio) e mostra CORRETA. Na janela de saída o `status` do quadro
+        é CORRETA (dado honesto, CSV) e o `status_exibido` é ALERTA.
     """
 
     def __init__(self, baseline_angulo, baseline_razao,
                  limiar_angulo=LIMIAR_DESVIO_ANGULO, limiar_queda=LIMIAR_QUEDA_RAZAO,
                  historico=HISTORICO_TAMANHO, frames_para_alerta=FRAMES_PARA_ALERTA,
-                 perdas_toleradas=PERDAS_TOLERADAS, minimo_medidos=MINIMO_RUINS_MEDIDOS):
+                 perdas_toleradas=PERDAS_TOLERADAS, minimo_medidos=MINIMO_RUINS_MEDIDOS,
+                 quadros_para_sair=QUADROS_PARA_SAIR_ALERTA):
         self.baseline_angulo = baseline_angulo
         self.baseline_razao = baseline_razao
         self.limiar_angulo = limiar_angulo
@@ -157,19 +165,28 @@ class AvaliadorPostura:
         self.frames_para_alerta = frames_para_alerta
         self.perdas_toleradas = perdas_toleradas
         self.minimo_medidos = minimo_medidos
+        self.quadros_para_sair = quadros_para_sair
         self._angulos = deque(maxlen=historico)
         self._razoes = deque(maxlen=historico)
         self.contador = 0
         self.perdidos = 0      # perdas seguidas dentro da sequência ruim
         self.medidos = 0       # quadros ruins MEDIDOS na sequência atual
+        self.em_alerta = False # entrou em ALERTA e ainda não saiu (só com a saída ligada)
+        self.bons_seguidos = 0 # quadros corretos seguidos na janela de saída
 
     def zerar(self):
         self._angulos.clear()
         self._razoes.clear()
-        self.contador = self.perdidos = self.medidos = 0
+        self._zerar_contador()
+
+    def _zerar_contador(self):
+        self.contador = self.perdidos = self.medidos = self.bons_seguidos = 0
+        self.em_alerta = False
 
     def _decisao_ruim(self):
-        if self.contador > self.frames_para_alerta and self.medidos >= self.minimo_medidos:
+        if self.em_alerta or (self.contador > self.frames_para_alerta
+                              and self.medidos >= self.minimo_medidos):
+            self.em_alerta = self.quadros_para_sair > 0
             return ALERTA
         return ATENCAO
 
@@ -180,13 +197,14 @@ class AvaliadorPostura:
             self._angulos.clear()
             self._razoes.clear()
             exibido = SEM_USUARIO
-            if self.contador > 0:
+            if self.contador > 0 or self.em_alerta:
                 self.perdidos += 1
+                self.bons_seguidos = 0
                 if self.perdidos <= self.perdas_toleradas:
                     self.contador += 1
                     exibido = self._decisao_ruim()
                 else:
-                    self.contador = self.perdidos = self.medidos = 0
+                    self._zerar_contador()
             return Avaliacao(SEM_USUARIO, None, None, None, None, exibido)
 
         self._angulos.append(angulo_bruto)
@@ -198,7 +216,9 @@ class AvaliadorPostura:
         queda_razao = (self.baseline_razao - razao) / self.baseline_razao  # só interessa quando DIMINUI
 
         self.perdidos = 0
+        exibido = None
         if postura_ruim(desvio_angulo, queda_razao, self.limiar_angulo, self.limiar_queda):
+            self.bons_seguidos = 0
             self.contador += 1
             self.medidos += 1
             status = self._decisao_ruim()
@@ -207,4 +227,10 @@ class AvaliadorPostura:
             if self.contador == 0:
                 self.medidos = 0
             status = CORRETA
-        return Avaliacao(status, angulo, razao, desvio_angulo, queda_razao, status)
+            if self.em_alerta:
+                self.bons_seguidos += 1
+                if self.bons_seguidos >= self.quadros_para_sair:
+                    self._zerar_contador()   # fim do episódio: contador vazio
+                else:
+                    exibido = ALERTA         # janela de saída: tela segue em ALERTA
+        return Avaliacao(status, angulo, razao, desvio_angulo, queda_razao, exibido or status)

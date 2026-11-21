@@ -57,6 +57,11 @@ são guardados; a decisão do serviço não usa.
    é regra de definição do método, não valor empírico. É **inferência por regras (máquina de
    estados), não IA**. O 5 de `PERDAS_TOLERADAS` é **provisório**, escolha do projeto, a
    definir com os dados do estudo.
+   **Saída do ALERTA (20/11):** depois que entra em ALERTA, a tela só volta pra CORRETA com
+   `QUADROS_PARA_SAIR_ALERTA` (12) quadros bons **seguidos** (≈ 3 s a 4,1 fps; faixa, depende
+   do fps); quadro ruim ou perda no meio reinicia. Ao sair, o contador zera (fim do episódio,
+   igual à tolerância do `avisa_pi.py`). Nessa janela o CSV grava `status` = CORRETA e
+   `status_exibido` = ALERTA. Valor **provisório**, sem fonte; `0` volta à saída instantânea.
 5. **Enquadramento (quais pontos a câmera vê):** na contagem da calibração o MoveNet já roda,
    e o status (`pontos_visiveis`) diz se a orelha, o ombro do lado dela e o outro ombro estão
    visíveis (confiança > 0,4). O pomodoro desenha isso no OLED como 3 pontos (cheio/vazado), e o

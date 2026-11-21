@@ -13,7 +13,7 @@ from collections import deque
 import postura_logica as pl
 from postura_config import (
     LIMIAR_DESVIO_ANGULO, LIMIAR_QUEDA_RAZAO, HISTORICO_TAMANHO, FRAMES_PARA_ALERTA,
-    PERDAS_TOLERADAS, MINIMO_RUINS_MEDIDOS,
+    PERDAS_TOLERADAS, MINIMO_RUINS_MEDIDOS, QUADROS_PARA_SAIR_ALERTA,
 )
 
 # Postura de referência: orelha 100 px acima do ombro esquerdo, ombros a 200 px
@@ -253,15 +253,50 @@ class TesteContadorDeAlerta(unittest.TestCase):
         self.assertEqual(av.perdidos, 1)
 
 
+class TesteSaidaDoAlerta(unittest.TestCase):
+    """20/11: ALERTA só sai com S quadros corretos seguidos; ao sair, o contador zera."""
+    K, S = FRAMES_PARA_ALERTA, QUADROS_PARA_SAIR_ALERTA
+
+    def test_fica_em_alerta_ate_s_quadros_bons_e_zera(self):
+        av, saida = rodar(f"R*{self.K + 1} C*{self.S - 1}")
+        self.assertEqual(saida[-1].status, pl.CORRETA)            # CSV: o quadro era bom
+        self.assertEqual(saida[-1].status_exibido, pl.ALERTA)     # tela: ainda na saída
+        r = av.avaliar(RETO)                                     # S-ésimo quadro bom
+        self.assertEqual(r.status_exibido, pl.CORRETA)
+        self.assertEqual((av.contador, av.medidos, av.em_alerta), (0, 0, False))
+        self.assertEqual(av.avaliar(tombado(40)).status_exibido, pl.ATENCAO)  # recomeça do zero
+
+    def test_ruim_no_meio_da_saida_reinicia(self):
+        _, saida = rodar(f"R*{self.K + 1} C*{self.S - 1} R C*{self.S - 1}")
+        self.assertEqual(saida[-1].status_exibido, pl.ALERTA)
+
+    def test_perda_no_meio_da_saida_reinicia(self):
+        av, saida = rodar(f"R*{self.K + 1} C*{self.S - 1} S C*{self.S - 1}")
+        self.assertEqual(saida[-1].status_exibido, pl.ALERTA)
+        self.assertEqual(av.avaliar(RETO).status_exibido, pl.CORRETA)
+
+    def test_perda_longa_na_saida_e_sem_usuario(self):
+        av, saida = rodar(f"R*{self.K + 1} S*{PERDAS_TOLERADAS + 1}")
+        self.assertEqual(saida[-1].status_exibido, pl.SEM_USUARIO)
+        self.assertFalse(av.em_alerta)
+
+    def test_saida_desligada_e_instantanea(self):
+        av, saida = rodar(f"R*{self.K + 1} C", quadros_para_sair=0)
+        self.assertEqual(saida[-1].status_exibido, pl.CORRETA)
+        self.assertEqual(av.contador, self.K)                     # só desconta 1 (antigo)
+
+
 class TesteIgualAoCodigoAntigo(unittest.TestCase):
     """
-    Prova do T1: SEM perdas de detecção, a decisão é idêntica à do código antigo em
-    sequências aleatórias longas. (Com perdas, o T3 muda de propósito: ver acima.)
+    Prova do T1: SEM perdas de detecção e com a saída do ALERTA desligada
+    (quadros_para_sair=0), a decisão é idêntica à do código antigo em sequências
+    aleatórias longas. (Com perdas, o T3 muda de propósito; com a saída ligada, a
+    janela de saída também: ver TesteSaidaDoAlerta.)
     """
 
     def _comparar(self, sequencia, baseline):
         antiga = ReferenciaAntiga(*baseline)
-        nova = pl.AvaliadorPostura(*baseline)
+        nova = pl.AvaliadorPostura(*baseline, quadros_para_sair=0)   # saída antiga (instantânea)
         for i, pontos in enumerate(sequencia):
             esperado = antiga.passo(pontos)
             obtido = tuple(nova.avaliar(pontos))[:5]
