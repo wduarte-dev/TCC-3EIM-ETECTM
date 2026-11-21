@@ -16,7 +16,8 @@ O que mudou em relação ao main-otimizado.py:
 - Recebe ordens do comando `postura` (status, live, video, recalibrar, gravar)
   por um socket Unix, sem precisar reiniciar o programa.
 - Grava vídeos de teste com a própria webcam (`postura gravar N`).
-- Grava um log CSV por dia na pasta logs/.
+- Grava um log CSV por dia na pasta logs/ (rotação de 7 dias, ver registro/).
+- Grava cada MUDANÇA de estado e cada calibração em ~/tcc-logs/eventos_AAAA-MM-DD.csv.
 - Janela com o vídeo é OPCIONAL (--preview), pra debug via `ssh -X`.
 
 Os cálculos (ângulo, razão pescoço/ombros, limiares, média móvel e contador de
@@ -58,6 +59,21 @@ from postura_logica import (
     calcular_razao_cb,
     CORRETA, ATENCAO, ALERTA,
 )
+
+sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                                 os.pardir, "registro")))
+from registro_comum import RegistroEventos, ORIGEM_POSTURA  # noqa: E402
+
+# Estados em que o fps faz sentido no detalhe do evento (a postura está sendo analisada)
+STATUS_COM_FPS = ("CORRETA", "ATENCAO", "ALERTA", "SEM_USUARIO")
+
+
+def detalhe_estado(status, fps):
+    """Detalhe do evento "estado": o status do serviço e, analisando, o fps.
+    (No OLED: CORRETA = BOA, ATENCAO = ATENÇÃO, ALERTA = RUIM; ver pomodoro/postura_cliente.py.)"""
+    if status in STATUS_COM_FPS and fps:
+        return f"{status} fps={fps:.1f}"
+    return status
 
 # Índices das articulações no MoveNet (COCO format)
 ORELHA_ESQ, ORELHA_DIR = 3, 4
@@ -362,6 +378,8 @@ class MonitorPostura:
     def __init__(self, preview=False, video_inicial=None):
         self.detector = DetectorPostura()
         self.log = LogCSV(DIR_LOGS)
+        self.eventos = RegistroEventos("postura")
+        self._status_evento = None   # último status gravado no arquivo de eventos
         self.comandos = queue.Queue()
         self.lock = threading.Lock()
         self.rodando = True
@@ -407,6 +425,11 @@ class MonitorPostura:
             self.estado["texto"] = texto
             self.estado["atualizado"] = datetime.now().strftime("%H:%M:%S")
             fonte, video = self.estado["fonte"], self.estado["video"]
+            fps_atual = self.estado.get("fps") or 0.0
+
+        if status != self._status_evento:     # eventos: só quando o estado MUDA
+            self._status_evento = status
+            self.eventos.registrar(ORIGEM_POSTURA, "estado", detalhe_estado(status, fps_atual))
 
         imprimir = (
             status != self._status_impresso
@@ -491,6 +514,8 @@ class MonitorPostura:
                 proxima = self._sessao(*proxima)
         finally:
             self.log.fechar()
+            self.eventos.servico_parou("postura")
+            self.eventos.fechar()
             if self.preview:
                 cv2.destroyAllWindows()
             try:
@@ -657,6 +682,9 @@ class MonitorPostura:
                 msg = "Calibração falhou (poucas detecções válidas). Confira se você aparece na câmera."
             # na tela fica cheio o ponto que apareceu em pelo menos metade dos quadros
             resumo = {nome: faltas[nome] * 2 < max(frames_lidos, 1) for nome in PONTOS}
+            self.eventos.registrar(ORIGEM_POSTURA, "calibracao_falhou",
+                                   f"{tipo} {falta or 'poucas deteccoes validas'} "
+                                   f"validos={len(amostras_angulo)}/{frames_lidos}")
             self.mostrar_status("CALIBRACAO_FALHOU", msg, forcar=True, pontos_visiveis=resumo)
             self._registrar_fim("calibracao", ok=False, msg=msg)
             return ("falhou",)
@@ -667,6 +695,9 @@ class MonitorPostura:
             salvar_baseline(baseline_angulo, baseline_razao)
 
         msg = f"Baseline calibrada: ângulo={baseline_angulo:.1f}°  razão_pescoço={baseline_razao:.3f}"
+        self.eventos.registrar(ORIGEM_POSTURA, "calibracao_ok",
+                               f"{tipo} angulo={baseline_angulo:.2f} razao={baseline_razao:.4f} "
+                               f"validos={len(amostras_angulo)}/{frames_lidos}")
         with self.lock:
             fonte, video = self.estado["fonte"], self.estado["video"]
         self.mostrar_status(
@@ -1084,6 +1115,9 @@ def main():
         print("Janela: 'q' encerra, 'r' recalibra.", flush=True)
 
     monitor = MonitorPostura(preview=preview, video_inicial=video_inicial)
+    monitor.eventos.servico_iniciou("postura")
+    print(f"Eventos em {monitor.eventos.arquivo.pasta} | versão do código: {monitor.eventos.versao}",
+          flush=True)
 
     def parar(_sinal, _quadro):
         monitor.rodando = False

@@ -9,7 +9,7 @@ o usuário vê tudo num display OLED 128x64 e usa 3 botões.
 |---|---|---|
 | [`sensor-postura/`](sensor-postura/) | Postura pela webcam (MoveNet): serviço do systemd + comando `postura` | Em uso |
 | [`pomodoro/`](pomodoro/) | Timer pomodoro no OLED, 3 botões (B1 menu postura/Wi-Fi, B2 pomodoro, B3 desligar) + comandos `pomodoro` e `wifi` | Em uso |
-| [`registro/`](registro/) | Logs do Pi: saúde (serviço `tcc-saude`, desde o boot), rotação de 7 dias e versão do código | Novo, não testado no Pi |
+| [`registro/`](registro/) | Logs do Pi em `~/tcc-logs`: saúde (serviço `tcc-saude`, desde o boot), eventos (pomodoro, postura, sistema), rotação de 7 dias e versão do código | Novo, não testado no Pi |
 | [`coleta/`](coleta/) | Programa de coleta do estudo de validação dos limiares (~30 pessoas, roda no notebook) | Pronto, não testado no Windows |
 | [`sensor-voz/`](sensor-voz/) | Fadiga vocal (jitter/shimmer/HNR via Praat) | **Fora do escopo** desde 19/11/2026 |
 

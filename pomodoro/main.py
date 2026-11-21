@@ -32,6 +32,7 @@ from postura_cliente import MonitorPostura, texto_curto, pontos_enquadramento
 from wifi import WifiConectar
 from display import criar_display, desenhar, desenhar_wifi_espera, desenhar_wifi_resultado
 from energia import Desligamento, TEXTO_DESLIGANDO
+from registro_pomodoro import LogPomodoro
 
 
 def main():
@@ -73,6 +74,10 @@ def main():
     else:
         desligamento = Desligamento()
     wifi = WifiConectar()
+    log = LogPomodoro()              # eventos em ~/tcc-logs (ver registro/README.md)
+    log.eventos.servico_iniciou("pomodoro")
+    print(f"Eventos em {log.eventos.arquivo.pasta} | versão do código: {log.eventos.versao}", flush=True)
+    log.observar(pomo)
     rodando = {"sim": True}
 
     def encerrar(*_):
@@ -101,7 +106,8 @@ def main():
             elif desligamento.em_andamento:
                 continue                 # desligando: ignora qualquer botão
             elif origem == "B3":
-                desligamento.botao(tipo)
+                if desligamento.botao(tipo):
+                    log.desligar_b3()
             elif origem == "B1":
                 if wifi.esperando:
                     if tipo == CURTO:
@@ -125,6 +131,7 @@ def main():
             assinatura_presets = presets.assinatura()
             pomo.trocar_presets(presets.todos())
         menu.tick(dt_real)
+        log.observar(pomo)
 
         if EV_FASE_MUDOU in eventos:
             piscar_ate = agora + PISCAR_MUDANCA_FASE_S
@@ -163,6 +170,8 @@ def main():
 
     monitor.parar()
     botoes.fechar()
+    log.eventos.servico_parou("pomodoro")
+    log.eventos.fechar()
     if desligamento.em_andamento:
         # o systemd manda SIGTERM ao desligar: deixa o aviso na tela em vez de apagá-la
         tela.mostrar(desenhar(pomo, TEXTO_DESLIGANDO))

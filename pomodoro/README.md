@@ -184,6 +184,7 @@ pomodoro remover --preset 50/10       # o pré-configurado não sai
 | `pomodoro_logica.py` | Máquina de estados (pura: não sabe de GPIO nem de tela) |
 | `botoes.py` | Filtro de repique, polaridade automática, classificação curto/longo/muito longo + botões reais (gpiozero, por amostragem) e simulados (teclado) |
 | `energia.py` | B3: desligar o Pi (`sudo poweroff`), contagem na tela e aviso de falha |
+| `registro_pomodoro.py` | **Log do pomodoro** no arquivo de eventos do Pi: grava só as transições (lógica pura) |
 | `diagnostico_botoes.py` | Mostra as bordas cruas dos pinos no Pi (repique × ruído × polaridade) |
 | `display.py` | Desenho da tela + backends (OLED, emulador pygame, PNG) |
 | `postura_cliente.py` | Consulta o `postura_servico.py` pelo socket Unix (sem mexer na câmera) |
@@ -233,8 +234,16 @@ Pra iniciar no boot: `bash instalar.sh` (sem `sudo` na frente). Depois:
 `python diagnostico_botoes.py` (5 s sem tocar; depois 5 cliques curtos em cada botão e um aperto de ~2 s; Ctrl+C mostra o resumo).
 Depois `python main.py` e confira no log a polaridade descoberta de cada botão.
 
+## Log (`~/tcc-logs/eventos_AAAA-MM-DD.csv`)
+
+O pomodoro grava cada transição no arquivo de eventos do Pi (ver `registro/README.md`): troca de
+preset, início e fim de foco/pausa/pausa longa (com preset e ciclo), pausar/retomar, voltar pra
+seleção, o pedido de desligar pelo B3 e `servico_iniciou`/`servico_parou` com a versão do código.
+Serve pra cruzar com a postura e com a saúde do Pi pelo horário.
+
 ## Limitações
 
+- O log de eventos não rodou no Pi ainda (testado no notebook).
 - Não foi testado no hardware real (OLED, módulos de botão, `sudo poweroff` pelo B3, fonte de energia do Pi). A leitura dos
   botões foi testada com pinos simulados (`MockFactory` do gpiozero) e sequências sintéticas de repique, não com o módulo real.
 - A polaridade automática falha se um botão estiver apertado ao iniciar (inverte a lógica daquele botão até reiniciar).
