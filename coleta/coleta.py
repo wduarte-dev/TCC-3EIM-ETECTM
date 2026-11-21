@@ -21,6 +21,7 @@ import csv
 import hashlib
 import os
 import platform
+import secrets
 import subprocess
 import sys
 import time
@@ -236,9 +237,9 @@ class RegistroCSV:
 # Metadados (no terminal, antes de abrir a janela)
 # =====================================================================
 
-def proximo_id(pasta):
-    """Próximo P01, P02... livre: olha os participantes*.csv (inclusive os de formato antigo)
-    e os quadros_P*.csv já gravados, pra nunca repetir um ID."""
+def ids_usados(pasta):
+    """IDs já gravados nesta pasta: participantes*.csv (inclusive os de formato antigo) e
+    nomes dos quadros_P*.csv."""
     usados = set()
     if os.path.isdir(pasta):
         for nome in os.listdir(pasta):
@@ -247,10 +248,20 @@ def proximo_id(pasta):
                     usados |= {linha.get("participante", "") for linha in csv.DictReader(arq)}
             elif nome.startswith("quadros_P"):
                 usados.add(nome.split("_")[1])
-    n = 1
-    while f"P{n:02d}" in usados:
-        n += 1
-    return f"P{n:02d}", usados
+    return usados
+
+
+def gerar_id(pasta, sortear=lambda: secrets.token_hex(3).upper()):
+    """ID ALEATÓRIO "P" + 6 hexadecimais (ex.: P3F9A2C). Aleatório, e não P01, P02..., porque a
+    coleta roda em VÁRIOS computadores, cada um com a sua pasta dados/: numerado, cada máquina
+    começaria do P01 e os IDs se repetiriam ao juntar os dados. 16^6 ≈ 16,8 milhões de IDs:
+    com 30 pessoas, a chance de repetir entre máquinas é ~30²/(2 × 16,8 mi) ≈ 0,003%
+    (aproximação do "paradoxo do aniversário"). Nesta pasta nunca repete (sorteia de novo)."""
+    usados = ids_usados(pasta)
+    while True:
+        pid = f"P{sortear()}"
+        if pid not in usados:
+            return pid
 
 
 def _sim_nao(pergunta, entrada):
@@ -281,7 +292,7 @@ def _numero(pergunta, minimo, maximo, entrada):
 
 
 def perguntar_metadados(pasta, notebook_padrao, entrada=input):
-    pid, _ = proximo_id(pasta)   # ID automático: ninguém digita (o próximo livre)
+    pid = gerar_id(pasta)   # ID automático e aleatório: ninguém digita
     print(f"\n=== Participante {pid} (ID anonimo automatico: nada de nome) ===")
     print("Lembre o participante: pode PULAR uma etapa (P) ou PARAR a qualquer momento (D),")
     print("sem precisar justificar. O que ja foi gravado fica salvo.")

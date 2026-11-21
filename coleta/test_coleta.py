@@ -292,17 +292,18 @@ class TesteRegistroCSV(unittest.TestCase):
         except ImportError as erro:
             self.skipTest(f"sem OpenCV/numpy: {erro}")
         with tempfile.TemporaryDirectory() as pasta:
-            self.assertEqual(coleta.proximo_id(pasta)[0], "P01")
             # termo, sexo, altura (1 erro + 1 fora da faixa antes), óculos, cabelo, cadeira,
             # distância, altura da câmera, webcam (1 inválida antes), notebook, observações
             respostas = iter(["s", "x", "m", "abc", "1,72", "172,5", "n", "s", "com encosto", "60",
                               "abaixo, so o tronco", "q", "t", "", ""])
             meta = coleta.perguntar_metadados(pasta, "nb-teste", entrada=lambda _: next(respostas))
-            self.assertEqual((meta["participante"], meta["notebook"], meta["oculos"]), ("P01", "nb-teste", "n"))
+            self.assertRegex(meta["participante"], r"^P[0-9A-F]{6}$")
+            self.assertEqual((meta["notebook"], meta["oculos"]), ("nb-teste", "n"))
+            pid = meta["participante"]
             self.assertEqual((meta["sexo"], meta["altura_pessoa_cm"], meta["webcam"]), ("mulher", 172.5, "tcc"))
             self.assertEqual(meta["altura_camera"], "abaixo, so o tronco")   # texto livre
             meta["observacoes_fim"] = "cabelo na orelha"
-            reg = coleta.RegistroCSV(pasta, "P01")
+            reg = coleta.RegistroCSV(pasta, pid)
             s = Sessao(reg, duracao_s=0.5, contagem_s=0.0)
             t = 0.0
             s.tecla("espaco", t)
@@ -336,7 +337,23 @@ class TesteRegistroCSV(unittest.TestCase):
             self.assertEqual((parts[0]["completa"], parts[0]["motivo_fim"]), ("0", "desistiu"))
             self.assertEqual((parts[0]["sexo"], parts[0]["altura_pessoa_cm"]), ("mulher", "172.5"))
             self.assertEqual(parts[0]["observacoes_fim"], "cabelo na orelha")
-            self.assertEqual(coleta.proximo_id(pasta)[0], "P02")
+            self.assertEqual(coleta.ids_usados(pasta), {pid})
+
+    def test_id_aleatorio_nao_repete_na_pasta(self):
+        try:
+            import coleta
+        except ImportError as erro:
+            self.skipTest(f"sem OpenCV/numpy: {erro}")
+        with tempfile.TemporaryDirectory() as pasta:
+            with open(os.path.join(pasta, "participantes.csv"), "w", newline="", encoding="utf-8") as arq:
+                csv.writer(arq).writerows([["participante"], ["PAAAAAA"]])
+            criar = os.path.join(pasta, "quadros_PBBBBBB_20261121-100000.csv")
+            open(criar, "w").close()
+            sorteios = iter(["AAAAAA", "BBBBBB", "CCCCCC"])
+            self.assertEqual(coleta.gerar_id(pasta, lambda: next(sorteios)), "PCCCCCC")
+            ids = {coleta.gerar_id(pasta) for _ in range(200)}
+            self.assertTrue(all(len(i) == 7 and i.startswith("P") for i in ids))
+            self.assertGreater(len(ids), 190)            # sorteio de verdade, não sequência
 
     def test_csv_de_formato_antigo_e_guardado(self):
         try:
@@ -354,7 +371,7 @@ class TesteRegistroCSV(unittest.TestCase):
             self.assertTrue(nomes[1].startswith("participantes_formato_antigo_"))
             self.assertEqual(coleta._cabecalho_atual(antigo), coleta.RegistroCSV.CAB_PARTICIPANTES)
             # o P01 do arquivo antigo continua contando como usado
-            self.assertEqual(coleta.proximo_id(pasta)[0], "P02")
+            self.assertIn("P01", coleta.ids_usados(pasta))
 
     def test_versao_pelo_arquivo_sem_git(self):
         try:

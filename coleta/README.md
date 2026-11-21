@@ -8,7 +8,7 @@ sem medição) separam postura boa de ruim. Nome do método: **validação empí
   pré-processamento** do serviço: importa `DetectorPostura` de `postura_servico.py` e as
   métricas de `postura_logica.py` (não copia nada).
 - **Não salva imagem nenhuma.** Só os 17 pontos do MoveNet + confiança, as métricas e os
-  metadados, em CSV, com ID anônimo (P01, P02…).
+  metadados, em CSV, com ID anônimo e aleatório (ex.: `P3F9A2C`).
 
 ## Arquivos
 
@@ -40,7 +40,11 @@ cd coleta
 python coleta.py --camera 1          # no notebook a 0 costuma ser a webcam embutida
 ```
 
-1. **No terminal:** o **ID é automático** (o próximo `P01`, `P02`... livre; ninguém digita).
+1. **No terminal:** o **ID é automático e aleatório** (`P` + 6 hexadecimais, ex.: `P3F9A2C`;
+   ninguém digita). Aleatório porque a coleta roda em **vários computadores**: numerado, cada
+   máquina começaria do `P01` e os IDs se repetiriam ao juntar os dados. A chance de dois
+   computadores sortearem o mesmo ID com 30 pessoas é de ~0,003% (conta, "paradoxo do
+   aniversário"); na mesma pasta nunca repete.
    Depois: termo aceito, sexo (`m` = mulher, `h` = homem), **altura da pessoa** em cm (número,
    de 100 a 230), óculos, cabelo cobrindo a orelha, cadeira, distância da câmera, altura da
    câmera (**texto livre**), webcam (`n` = do notebook, `t` = do TCC, a Bresser), notebook,
