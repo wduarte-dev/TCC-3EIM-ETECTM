@@ -31,13 +31,14 @@ def pessoa(orelha=(260, 180), ombro=(250, 300), outro_ombro=(390, 300), outra_or
 
 class RegistroFalso:
     def __init__(self):
-        self.quadros, self.etapas = [], []
+        self.quadros, self.etapas, self.motivos = [], [], []
 
     def quadro(self, sessao, t, analise, kps):
         self.quadros.append((sessao.etapa.chave, sessao.tentativa, t, analise["valido"]))
 
-    def etapa(self, sessao, resumo, aceita):
+    def etapa(self, sessao, resumo, aceita, motivo=""):
         self.etapas.append((sessao.etapa.chave, sessao.tentativa, aceita, resumo["n_total"]))
+        self.motivos.append(motivo)
 
 
 class TesteAnalisarQuadro(unittest.TestCase):
@@ -149,6 +150,7 @@ class TesteSessao(unittest.TestCase):
             self.s.tecla("espaco", self.t)
         self.assertEqual(self.s.estado, FIM)
         self.assertTrue(self.s.completa)
+        self.assertEqual(self.s.motivo_fim, "fim")
         self.assertEqual(self.s.aceitas, [e.chave for e in ETAPAS])
         self.assertEqual(len(self.reg.etapas), 7)
         self.assertTrue(all(aceita for _, _, aceita, _ in self.reg.etapas))
@@ -194,6 +196,84 @@ class TesteSessao(unittest.TestCase):
         self.assertEqual(self.s.estado, FIM)
         self.assertFalse(self.s.completa)
         self.assertEqual(self.reg.etapas[-1][:3], ("correta", 1, False))
+        self.assertEqual((self.reg.motivos[-1], self.s.motivo_fim), ("interrompida", "interrompida"))
+
+    def ate_etapa(self, n):
+        """Aceita as etapas antes da `n` (1 = começa na baseline)."""
+        self.s.tecla("espaco", self.t)
+        for _ in range(n - 1):
+            self.gravar_etapa(pessoa())
+            self.s.tecla("espaco", self.t)
+
+    def test_contagem_padrao_5_s(self):
+        self.assertEqual(Sessao(self.reg).contagem_s, 5.0)
+
+    def test_nao_pula_a_baseline(self):
+        self.ate_etapa(1)
+        self.assertFalse(self.s.pode_pular())
+        self.s.tecla("pular", self.t)
+        self.assertEqual((self.s.etapa.chave, self.s.estado), ("correta", INSTRUCAO))
+        self.assertEqual(self.reg.etapas, [])
+
+    def test_pular_no_meio_da_gravacao_guarda_os_quadros(self):
+        self.ate_etapa(3)
+        self.s.tecla("espaco", self.t)
+        self.passar(0.9, pessoa())               # 0,5 s de contagem + ~0,4 s gravando
+        n = len(self.reg.quadros)
+        self.s.tecla("pular", self.t)
+        self.assertEqual(self.s.etapa.chave, "relaxada")
+        self.assertEqual(self.s.estado, INSTRUCAO)
+        self.assertEqual(self.reg.etapas[-1][:3], ("incl_direita", 1, False))
+        self.assertGreater(self.reg.etapas[-1][3], 0)
+        self.assertEqual(self.reg.motivos[-1], "pulou")
+        self.assertEqual(len(self.reg.quadros), n)  # nada apagado
+        self.assertEqual(self.s.puladas, ["incl_direita"])
+
+    def test_pular_antes_de_gravar_registra_linha_vazia(self):
+        self.ate_etapa(2)
+        self.s.tecla("pular", self.t)            # na tela de instrução
+        self.assertEqual(self.reg.etapas[-1], ("incl_esquerda", 1, False, 0))
+        self.assertEqual(self.reg.motivos[-1], "pulou")
+
+    def test_pular_a_ultima_termina_incompleta(self):
+        self.ate_etapa(7)
+        self.s.tecla("pular", self.t)
+        self.assertEqual(self.s.estado, FIM)
+        self.assertFalse(self.s.completa)        # completa = as 7 ACEITAS
+        self.assertEqual(self.s.motivo_fim, "fim")
+        self.assertEqual(len(self.s.aceitas), 6)
+
+    def test_desistir_salva_e_encerra(self):
+        self.ate_etapa(4)
+        self.gravar_etapa(pessoa())              # na revisão, ainda não aceita
+        self.s.tecla("desistir", self.t)
+        self.assertEqual(self.s.estado, FIM)
+        self.assertEqual(self.s.motivo_fim, "desistiu")
+        self.assertFalse(self.s.completa)
+        self.assertEqual(self.reg.etapas[-1][:3], ("relaxada", 1, False))
+        self.assertEqual(self.reg.motivos[-1], "desistiu")
+        self.s.tecla("desistir", self.t)         # depois do fim não grava de novo
+        self.assertEqual(len(self.reg.etapas), 4)
+
+    def test_desistir_no_enquadramento_nao_cria_etapa(self):
+        self.s.tecla("desistir", self.t)
+        self.assertEqual((self.s.estado, self.s.motivo_fim, self.reg.etapas), (FIM, "desistiu", []))
+
+    def test_repetir_tem_motivo(self):
+        self.ate_etapa(1)
+        self.gravar_etapa(pessoa())
+        self.s.tecla("r", self.t)
+        self.assertEqual(self.reg.motivos[-1], "repetir")
+
+    def test_textos_aprovados(self):
+        for e in ETAPAS[1:]:
+            self.assertEqual(e.instrucoes[0], "Volte a postura correta (como na etapa 1).")
+        for e in ETAPAS[1:3]:
+            self.assertIn("ORELHA", " ".join(e.instrucoes))
+            self.assertIn("NAO gire o rosto", " ".join(e.instrucoes))
+        for e in ETAPAS:
+            for linha in (e.titulo, *e.instrucoes):
+                linha.encode("ascii")            # a janela do OpenCV só aceita ASCII
 
     def test_desvio_usa_a_baseline_aceita(self):
         self.s.tecla("espaco", self.t)
@@ -212,11 +292,18 @@ class TesteRegistroCSV(unittest.TestCase):
         except ImportError as erro:
             self.skipTest(f"sem OpenCV/numpy: {erro}")
         with tempfile.TemporaryDirectory() as pasta:
-            self.assertEqual(coleta.proximo_id(pasta)[0], "P01")
-            respostas = iter(["", "s", "n", "s", "com encosto", "60", "olhos", "", ""])
+            # termo, sexo, altura (1 erro + 1 fora da faixa antes), óculos, cabelo, cadeira,
+            # distância, altura da câmera, webcam (1 inválida antes), notebook, observações
+            respostas = iter(["s", "x", "m", "abc", "1,72", "172,5", "n", "s", "com encosto", "60",
+                              "abaixo, so o tronco", "q", "t", "", ""])
             meta = coleta.perguntar_metadados(pasta, "nb-teste", entrada=lambda _: next(respostas))
-            self.assertEqual((meta["participante"], meta["notebook"], meta["oculos"]), ("P01", "nb-teste", "n"))
-            reg = coleta.RegistroCSV(pasta, "P01")
+            self.assertRegex(meta["participante"], r"^P[0-9A-F]{6}$")
+            self.assertEqual((meta["notebook"], meta["oculos"]), ("nb-teste", "n"))
+            pid = meta["participante"]
+            self.assertEqual((meta["sexo"], meta["altura_pessoa_cm"], meta["webcam"]), ("mulher", 172.5, "tcc"))
+            self.assertEqual(meta["altura_camera"], "abaixo, so o tronco")   # texto livre
+            meta["observacoes_fim"] = "cabelo na orelha"
+            reg = coleta.RegistroCSV(pasta, pid)
             s = Sessao(reg, duracao_s=0.5, contagem_s=0.0)
             t = 0.0
             s.tecla("espaco", t)
@@ -227,6 +314,8 @@ class TesteRegistroCSV(unittest.TestCase):
                     s.quadro(None if etapa == 1 and i in (2, 3) else pessoa(), t)
                 self.assertTrue(s.pode_aceitar())
                 s.tecla("espaco", t)
+            s.tecla("pular", t)                  # pula a etapa 3 (sem gravar)
+            s.tecla("desistir", t)               # e desiste na 4
             reg.participante_fim(s, meta, dict(fonte="teste", modelo_md5="x"))
             reg.fechar()
             with open(reg.caminho_quadros, encoding="utf-8") as arq:
@@ -236,13 +325,87 @@ class TesteRegistroCSV(unittest.TestCase):
             self.assertGreater(len(linhas), 5)
             with open(os.path.join(pasta, "etapas.csv"), encoding="utf-8") as arq:
                 etapas = list(csv.DictReader(arq))
-            self.assertEqual([e["etapa_chave"] for e in etapas], ["correta", "incl_esquerda"])
+            self.assertEqual([e["etapa_chave"] for e in etapas],
+                             ["correta", "incl_esquerda", "incl_direita", "relaxada"])
+            self.assertEqual([e["motivo"] for e in etapas], ["", "", "pulou", "desistiu"])
+            self.assertEqual([e["aceita"] for e in etapas], ["1", "1", "0", "0"])
             self.assertTrue(etapas[0]["baseline_angulo"])
             with open(os.path.join(pasta, "participantes.csv"), encoding="utf-8") as arq:
                 parts = list(csv.DictReader(arq))
             self.assertEqual(parts[0]["etapas_aceitas"], "correta|incl_esquerda")
-            self.assertEqual(parts[0]["completa"], "0")
-            self.assertEqual(coleta.proximo_id(pasta)[0], "P02")
+            self.assertEqual(parts[0]["etapas_puladas"], "incl_direita")
+            self.assertEqual((parts[0]["completa"], parts[0]["motivo_fim"]), ("0", "desistiu"))
+            self.assertEqual((parts[0]["sexo"], parts[0]["altura_pessoa_cm"]), ("mulher", "172.5"))
+            self.assertEqual(parts[0]["observacoes_fim"], "cabelo na orelha")
+            self.assertEqual(coleta.ids_usados(pasta), {pid})
+
+    def test_id_aleatorio_nao_repete_na_pasta(self):
+        try:
+            import coleta
+        except ImportError as erro:
+            self.skipTest(f"sem OpenCV/numpy: {erro}")
+        with tempfile.TemporaryDirectory() as pasta:
+            with open(os.path.join(pasta, "participantes.csv"), "w", newline="", encoding="utf-8") as arq:
+                csv.writer(arq).writerows([["participante"], ["PAAAAAA"]])
+            criar = os.path.join(pasta, "quadros_PBBBBBB_20261121-100000.csv")
+            open(criar, "w").close()
+            sorteios = iter(["AAAAAA", "BBBBBB", "CCCCCC"])
+            self.assertEqual(coleta.gerar_id(pasta, lambda: next(sorteios)), "PCCCCCC")
+            ids = {coleta.gerar_id(pasta) for _ in range(200)}
+            self.assertTrue(all(len(i) == 7 and i.startswith("P") for i in ids))
+            self.assertGreater(len(ids), 190)            # sorteio de verdade, não sequência
+
+    def test_csv_de_formato_antigo_e_guardado(self):
+        try:
+            import coleta
+        except ImportError as erro:
+            self.skipTest(f"sem OpenCV/numpy: {erro}")
+        with tempfile.TemporaryDirectory() as pasta:
+            antigo = os.path.join(pasta, "participantes.csv")
+            with open(antigo, "w", newline="", encoding="utf-8") as arq:
+                csv.writer(arq).writerows([["participante", "completa"], ["P01", "1"]])
+            arq, escritor = coleta._abrir_csv(antigo, coleta.RegistroCSV.CAB_PARTICIPANTES)
+            arq.close()
+            nomes = sorted(os.listdir(pasta))
+            self.assertEqual(len(nomes), 2)
+            self.assertTrue(nomes[1].startswith("participantes_formato_antigo_"))
+            self.assertEqual(coleta._cabecalho_atual(antigo), coleta.RegistroCSV.CAB_PARTICIPANTES)
+            # o P01 do arquivo antigo continua contando como usado
+            self.assertIn("P01", coleta.ids_usados(pasta))
+
+    def test_versao_pelo_arquivo_sem_git(self):
+        try:
+            import coleta
+        except ImportError as erro:
+            self.skipTest(f"sem OpenCV/numpy: {erro}")
+        original = coleta._git
+        coleta._git = lambda *a: ""              # como num zip: sem .git
+        try:
+            with tempfile.TemporaryDirectory() as pasta:
+                arq = os.path.join(pasta, "VERSAO")
+                self.assertEqual(coleta._versao_codigo(arq), "desconhecida")   # não existe
+                with open(arq, "w", encoding="utf-8") as f:
+                    f.write("$Format:%h$\n")
+                self.assertEqual(coleta._versao_codigo(arq), "desconhecida")   # marcador cru
+                with open(arq, "w", encoding="utf-8") as f:
+                    f.write("027b861\n")
+                self.assertEqual(coleta._versao_codigo(arq), "027b861")
+        finally:
+            coleta._git = original
+
+    def test_observacoes_fim_e_quebra_de_linha(self):
+        try:
+            import coleta
+        except ImportError as erro:
+            self.skipTest(f"sem OpenCV/numpy: {erro}")
+        self.assertEqual(coleta.perguntar_observacoes_fim(lambda _: "  repetiu a 6 "), "repetiu a 6")
+        def interrompe(_):
+            raise EOFError
+        self.assertEqual(coleta.perguntar_observacoes_fim(interrompe), "")
+        texto = "palavra " * 30
+        linhas = coleta.quebrar_linha(texto, largura_px=200)
+        self.assertGreater(len(linhas), 1)
+        self.assertEqual(" ".join(linhas).split(), texto.split())
 
 
 class TesteDetectorDeVerdade(unittest.TestCase):

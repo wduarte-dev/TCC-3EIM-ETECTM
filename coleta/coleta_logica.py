@@ -35,45 +35,59 @@ I_ORELHA, I_OUTRA_ORELHA, I_OMBRO_ORELHA, I_OUTRO_OMBRO = 3, 4, 5, 6   # os mesm
 
 Etapa = namedtuple("Etapa", "num chave titulo instrucoes")
 
-# Texto da etapa 1: OSHA, Computer Workstations eTool, "Good Working Positions"
-# (cabeça nivelada, olhando pra frente e alinhada com o tronco; ombros relaxados e braços
-# soltos ao lado do corpo; tronco e pescoço aproximadamente verticais; pés apoiados).
-# Sem acento: o texto da janela do OpenCV só aceita ASCII.
+# Textos APROVADOS pelo Wellington em 20/11/2026 (doc `textos-etapas-coleta.md` do Project).
+# Etapa 1: OSHA, Computer Workstations eTool, "Good Working Positions" (cabeça nivelada e
+# alinhada com o tronco; ombros relaxados e braços soltos ao lado do corpo; tronco e pescoço
+# aproximadamente verticais; pés apoiados).
+# Etapas 2 a 7 começam voltando à postura correta: cada medida é comparada com a baseline da
+# etapa 1, e uma etapa que começa torta pela anterior misturaria as duas.
+# Etapas 2 e 3: "orelha em direção ao ombro, sem girar o rosto" (na 1ª coleta a pessoa GIROU a
+# cabeça: ângulo quase parado e razão mudando muito; leitura por inferência).
+# Sem acento: o texto da janela do OpenCV só aceita ASCII. Linha longa é quebrada na tela.
+VOLTE = "Volte a postura correta (como na etapa 1)."
 ETAPAS = (
     Etapa(1, "correta", "POSTURA CORRETA (baseline)", (
         "Sente com as costas apoiadas no encosto.",
         "Tronco e pescoco retos, mais ou menos na vertical.",
-        "Cabeca nivelada, olhando pra frente,",
+        "Cabeca nivelada, olhando para o monitor,",
         "alinhada com o tronco.",
         "Ombros relaxados, bracos soltos ao lado do corpo.",
         "Pes apoiados no chao.",
         "(Referencia: OSHA, Computer Workstations eTool)",
     )),
     Etapa(2, "incl_esquerda", "CABECA INCLINADA PRA ESQUERDA", (
-        "Incline a cabeca pro lado do SEU ombro esquerdo,",
-        "o maximo que conseguir sem dor.",
+        VOLTE,
+        "Agora leve a ORELHA esquerda em direcao",
+        "ao SEU ombro esquerdo, ate onde conseguir sem dor.",
+        "NAO gire o rosto: o nariz continua pra frente.",
         "Ombros parados.",
     )),
     Etapa(3, "incl_direita", "CABECA INCLINADA PRA DIREITA", (
-        "Incline a cabeca pro lado do SEU ombro direito,",
-        "o maximo que conseguir sem dor.",
+        VOLTE,
+        "Agora leve a ORELHA direita em direcao",
+        "ao SEU ombro direito, ate onde conseguir sem dor.",
+        "NAO gire o rosto: o nariz continua pra frente.",
         "Ombros parados.",
     )),
     Etapa(4, "relaxada", "SEU JEITO NORMAL", (
+        VOLTE,
         "Sente do jeito que voce costuma ficar",
-        "no computador, relaxado.",
+        "no computador, relaxado e o mais natural possivel.",
         "Nao tente corrigir a postura.",
     )),
     Etapa(5, "ma_postura", "MA POSTURA (ENCURVADO)", (
+        VOLTE,
         "Ombros projetados pra frente e",
         "cabeca levemente caida pra frente,",
         "como quem esta cansado no fim do dia.",
     )),
     Etapa(6, "cabeca_baixa", "CABECA BAIXA", (
+        VOLTE,
         "Olhe pro seu colo,",
         "como quem le o celular apoiado nas pernas.",
     )),
     Etapa(7, "projecao", "SO A CABECA PRA FRENTE", (
+        VOLTE,
         "Empurre so a cabeca (o queixo) pra frente.",
         "Ombros parados, sem encurvar.",
     )),
@@ -154,6 +168,15 @@ def resumir_etapa(analises, duracao_s):
 ENQUADRAR, INSTRUCAO, CONTAGEM, GRAVANDO, REVISAO, FIM = (
     "ENQUADRAR", "INSTRUCAO", "CONTAGEM", "GRAVANDO", "REVISAO", "FIM")
 
+# Motivo de cada tentativa NÃO aceita (coluna `motivo` do etapas.csv; aceita = vazio).
+# "repetir" é rejeição por qualidade (o operador apertou R); "pulou" é escolha do participante
+# e vira DADO FALTANTE INFORMATIVO na análise (taxa de pulos por etapa), não rejeição.
+MOTIVO_REPETIR, MOTIVO_PULOU, MOTIVO_DESISTIU, MOTIVO_INTERROMPIDA = (
+    "repetir", "pulou", "desistiu", "interrompida")
+# Motivo do fim da sessão (coluna `motivo_fim` do participantes.csv)
+FIM_NORMAL, FIM_DESISTIU, FIM_INTERROMPIDA, FIM_CAMERA, FIM_VIDEO = (
+    "fim", "desistiu", "interrompida", "camera_falhou", "video_acabou")
+
 
 class Sessao:
     """
@@ -163,17 +186,25 @@ class Sessao:
         CONTAGEM   alguns segundos pra pessoa assumir a pose (não grava)
         GRAVANDO   grava todos os quadros por `duracao_s`
         REVISAO    mostra o resumo → ESPAÇO aceita, R repete a etapa
-        FIM        acabou as 7 etapas (ou o operador saiu)
+        FIM        acabou as 7 etapas, a pessoa desistiu ou o operador saiu
+
+    Saídas do participante (pedido do Wellington, 20/11), nas duas os dados ficam salvos:
+        P (pular)    grava a tentativa em andamento com aceita=0 e motivo "pulou" e segue pra
+                     próxima etapa. NÃO vale na etapa 1: sem baseline as outras não têm referência.
+        D (desistir) grava a tentativa em andamento com motivo "desistiu" e encerra
+                     (participantes.csv: completa=0, motivo_fim "desistiu").
 
     Só a etapa 1 EXIGE repetir quando não deu (sem baseline não dá pra comparar nada).
     Nas outras, perder os pontos é DADO (hipótese do T3), então aceita mesmo com perdas.
+    `completa` = as 7 etapas ACEITAS (mesmo sentido de antes); quem pulou alguma chega ao
+    fim com completa=0 e motivo_fim "fim".
 
     `registro` recebe tudo que deve ir pro disco:
         registro.quadro(sessao, t_s, analise, kps)
-        registro.etapa(sessao, resumo, aceita)
+        registro.etapa(sessao, resumo, aceita, motivo)
     """
 
-    def __init__(self, registro, duracao_s=5.0, contagem_s=2.0, etapas=ETAPAS):
+    def __init__(self, registro, duracao_s=5.0, contagem_s=5.0, etapas=ETAPAS):
         self.registro = registro
         self.duracao_s = duracao_s
         self.contagem_s = contagem_s
@@ -185,8 +216,10 @@ class Sessao:
         self.baseline_b_px = None   # mediana da largura dos ombros na etapa 1 (pra b/b0 offline)
         self.baseline_cb = None     # mediana de c/b na etapa 1
         self.aceitas = []           # chaves das etapas aceitas
+        self.puladas = []           # chaves das etapas puladas pelo participante
         self.resumo = None          # resumo da última tentativa (tela de revisão)
         self.completa = False
+        self.motivo_fim = None      # FIM_* (None enquanto não acabou)
         self._t0 = None
         self._analises = []
 
@@ -217,6 +250,10 @@ class Sessao:
             return self.resumo["baseline"] is not None
         return True
 
+    def pode_pular(self):
+        """Pular só a partir da etapa 2, com uma etapa em andamento."""
+        return self.indice > 0 and self.estado in (INSTRUCAO, CONTAGEM, GRAVANDO, REVISAO)
+
     def aviso_revisao(self):
         """Texto curto pro operador na revisão (None = nada a avisar)."""
         if self.resumo is None:
@@ -233,9 +270,16 @@ class Sessao:
 
     # --- entradas ---
     def tecla(self, tecla, agora):
-        """tecla: 'espaco', 'r' ou 'sair'."""
+        """tecla: 'espaco', 'r', 'pular', 'desistir' ou 'sair' (ESC/fechar a janela)."""
         if tecla == "sair":
-            self._sair(agora)
+            self.encerrar(agora, FIM_INTERROMPIDA)
+        elif tecla == "desistir":
+            self.encerrar(agora, FIM_DESISTIU)
+        elif tecla == "pular":
+            if self.pode_pular():
+                self._registrar_em_andamento(agora, MOTIVO_PULOU)
+                self.puladas.append(self.etapa.chave)
+                self._avancar()
         elif tecla == "espaco":
             if self.estado == ENQUADRAR:
                 self.estado = INSTRUCAO
@@ -244,7 +288,7 @@ class Sessao:
             elif self.estado == REVISAO and self.pode_aceitar():
                 self._aceitar()
         elif tecla == "r" and self.estado == REVISAO:
-            self.registro.etapa(self, self.resumo, False)
+            self.registro.etapa(self, self.resumo, False, MOTIVO_REPETIR)
             self.tentativa += 1
             self.estado = INSTRUCAO
 
@@ -262,31 +306,51 @@ class Sessao:
                 self.registro.quadro(self, t, analise, kps)
         return analise
 
+    def encerrar(self, agora, motivo_fim):
+        """Fim antes da hora (desistiu, ESC, câmera/vídeo acabou). O que já foi gravado fica;
+        a tentativa em andamento é registrada como não aceita, com o motivo."""
+        if self.estado == FIM:
+            return
+        motivo = MOTIVO_DESISTIU if motivo_fim == FIM_DESISTIU else MOTIVO_INTERROMPIDA
+        self._registrar_em_andamento(agora, motivo)
+        self.motivo_fim = motivo_fim
+        self.estado = FIM
+
     # --- internos ---
     def _fechar_gravacao(self, duracao_real):
         self.resumo = resumir_etapa(self._analises, duracao_real)
         self.estado = REVISAO
 
+    def _registrar_em_andamento(self, agora, motivo):
+        """Grava a tentativa atual como não aceita. Também quando nada foi gravado ainda
+        (n_total=0): assim fica registrado EM QUE etapa a pessoa pulou ou parou."""
+        if self.estado == REVISAO and self.resumo is not None:
+            resumo = self.resumo
+        elif self.estado == GRAVANDO:
+            resumo = resumir_etapa(self._analises, agora - self._t0)
+        elif self.estado in (INSTRUCAO, CONTAGEM):
+            resumo = resumir_etapa([], 0.0)
+        else:                       # ENQUADRAR (nenhuma etapa começou) ou FIM
+            return
+        self.registro.etapa(self, resumo, False, motivo)
+
     def _aceitar(self):
-        self.registro.etapa(self, self.resumo, True)
+        self.registro.etapa(self, self.resumo, True, "")
         if self.indice == 0:
             self.baseline = self.resumo["baseline"]
             self.baseline_b_px = self.resumo["b_px_mediana"]
             self.baseline_cb = self.resumo["razao_cb_mediana"]
         self.aceitas.append(self.etapa.chave)
+        self._avancar()
+
+    def _avancar(self):
         self.indice += 1
         self.tentativa = 1
         self.resumo = None
+        self._analises = []
         if self.indice >= len(self.etapas):
-            self.completa = True
+            self.completa = len(self.aceitas) == len(self.etapas)
+            self.motivo_fim = FIM_NORMAL
             self.estado = FIM
         else:
             self.estado = INSTRUCAO
-
-    def _sair(self, agora):
-        if self.estado == GRAVANDO and self._analises:
-            # gravação interrompida: registra a tentativa como não aceita
-            self.registro.etapa(self, resumir_etapa(self._analises, agora - self._t0), False)
-        elif self.estado == REVISAO and self.resumo is not None:
-            self.registro.etapa(self, self.resumo, False)
-        self.estado = FIM

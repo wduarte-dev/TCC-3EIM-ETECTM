@@ -1,3 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 sensor-voz/praat filter=lfs diff=lfs merge=lfs -text
+
+# coleta/VERSAO: o zip do GitHub (git archive) troca o marcador pelo hash do commit
+coleta/VERSAO export-subst
