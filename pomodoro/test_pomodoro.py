@@ -977,5 +977,73 @@ class TesteDiagnostico(unittest.TestCase):
         self.assertIsNone(r["menor_intervalo_ms"])
 
 
+
+class TesteLogPomodoro(unittest.TestCase):
+    """Eventos do pomodoro no eventos_*.csv (registro/): só as transições."""
+
+    def rodar(self, passos):
+        import csv
+        from registro_pomodoro import LogPomodoro   # põe registro/ no caminho
+        from registro_comum import RegistroEventos
+        with tempfile.TemporaryDirectory() as pasta:
+            log = LogPomodoro(RegistroEventos("pomodoro", pasta=pasta, versao="teste"))
+            p = novo(ciclos=2)
+            log.observar(p)
+            for passo in passos:
+                passo(p)
+                log.observar(p)
+            log.eventos.fechar()
+            arq = os.path.join(pasta, os.listdir(pasta)[0])
+            with open(arq, encoding="utf-8") as f:
+                linhas = list(csv.DictReader(l for l in f if not l.startswith("#")))
+        return [(l["evento"], l["detalhe"]) for l in linhas]
+
+    def test_ciclo_completo(self):
+        ev = self.rodar([
+            lambda p: p.botao(CURTO),            # preset B
+            lambda p: p.botao(CURTO),            # volta pro A
+            lambda p: p.botao(LONGO),            # inicia foco (2 min)
+            lambda p: p.tick(30),                # nada muda
+            lambda p: p.botao(CURTO),            # pausa o timer
+            lambda p: p.botao(CURTO),            # retoma
+            lambda p: p.tick(90),                # foco → pausa
+            lambda p: p.tick(60),                # pausa → foco 2
+            lambda p: p.tick(120),               # foco 2 → pausa longa
+            lambda p: p.botao(LONGO),            # volta pra seleção
+        ])
+        self.assertEqual([e for e, _ in ev], [
+            "preset", "preset", "foco_inicio", "pausou", "retomou", "foco_fim", "pausa_inicio",
+            "pausa_fim", "foco_inicio", "foco_fim", "pausa_longa_inicio", "voltou_selecao"])
+        self.assertEqual(ev[0], ("preset", "B"))
+        self.assertEqual(ev[2], ("foco_inicio", "preset=A ciclo=1/2"))
+        self.assertEqual(ev[3], ("pausou", "foco preset=A ciclo=1/2"))
+        self.assertEqual(ev[8], ("foco_inicio", "preset=A ciclo=2/2"))
+        self.assertEqual(ev[-1][0], "voltou_selecao")
+        self.assertIn("interrompeu pausa_longa", ev[-1][1])
+
+    def test_voltar_pausado(self):
+        ev = self.rodar([lambda p: p.botao(LONGO), lambda p: p.botao(CURTO), lambda p: p.botao(LONGO)])
+        self.assertEqual([e for e, _ in ev], ["foco_inicio", "pausou", "voltou_selecao"])
+        self.assertIn("interrompeu foco", ev[-1][1])
+
+    def test_sem_mudanca_nao_grava(self):
+        from registro_pomodoro import transicoes, foto
+        p = novo()
+        self.assertEqual(transicoes(foto(p), foto(p)), [])
+        self.assertEqual(transicoes(None, foto(p)), [])
+
+    def test_b3_vai_como_sistema(self):
+        import csv
+        from registro_pomodoro import LogPomodoro   # põe registro/ no caminho
+        from registro_comum import RegistroEventos
+        with tempfile.TemporaryDirectory() as pasta:
+            log = LogPomodoro(RegistroEventos("pomodoro", pasta=pasta, versao="teste"))
+            log.desligar_b3()
+            log.eventos.fechar()
+            with open(os.path.join(pasta, os.listdir(pasta)[0]), encoding="utf-8") as f:
+                linha = list(csv.DictReader(l for l in f if not l.startswith("#")))[0]
+        self.assertEqual((linha["origem"], linha["evento"]), ("sistema", "desligar_b3"))
+
+
 if __name__ == "__main__":
     unittest.main()

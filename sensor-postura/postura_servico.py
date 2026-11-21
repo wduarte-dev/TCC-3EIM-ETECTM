@@ -16,7 +16,8 @@ O que mudou em relação ao main-otimizado.py:
 - Recebe ordens do comando `postura` (status, live, video, recalibrar, gravar)
   por um socket Unix, sem precisar reiniciar o programa.
 - Grava vídeos de teste com a própria webcam (`postura gravar N`).
-- Grava um log CSV por dia na pasta logs/.
+- Grava um log CSV por dia na pasta logs/ (rotação de 7 dias, ver registro/).
+- Grava cada MUDANÇA de estado e cada calibração em ~/tcc-logs/eventos_AAAA-MM-DD.csv.
 - Janela com o vídeo é OPCIONAL (--preview), pra debug via `ssh -X`.
 
 Os cálculos (ângulo, razão pescoço/ombros, limiares, média móvel e contador de
@@ -58,6 +59,24 @@ from postura_logica import (
     calcular_razao_cb,
     CORRETA, ATENCAO, ALERTA,
 )
+
+sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                                 os.pardir, "registro")))
+from registro_comum import (  # noqa: E402
+    RegistroEventos, ORIGEM_POSTURA, GRUPO_QUADROS, TETO_QUADROS, MAX_DIAS,
+    INTERVALO_CONFERE_TETO_S, agora_iso, limpar_antigos, linha_versao, versao_codigo,
+)
+
+# Estados em que o fps faz sentido no detalhe do evento (a postura está sendo analisada)
+STATUS_COM_FPS = ("CORRETA", "ATENCAO", "ALERTA", "SEM_USUARIO")
+
+
+def detalhe_estado(status, fps):
+    """Detalhe do evento "estado": o status do serviço e, analisando, o fps.
+    (No OLED: CORRETA = BOA, ATENCAO = ATENÇÃO, ALERTA = RUIM; ver pomodoro/postura_cliente.py.)"""
+    if status in STATUS_COM_FPS and fps:
+        return f"{status} fps={fps:.1f}"
+    return status
 
 # Índices das articulações no MoveNet (COCO format)
 ORELHA_ESQ, ORELHA_DIR = 3, 4
@@ -229,7 +248,10 @@ def abrir_camera():
 
 
 # =====================================================================
-# LOG EM CSV — um arquivo por dia em logs/
+# LOG EM CSV — um arquivo por dia em logs/, com rotação (ver registro/README.md):
+# apaga os de mais de 7 dias e, passando de 300 MB, o mais antigo antes disso.
+# Horário ISO com fuso (mesmo relógio da saúde e dos eventos) e uma linha
+# "# versao_codigo=..." a cada abertura: ler com pd.read_csv(..., comment="#").
 # =====================================================================
 
 class LogCSV:
@@ -241,19 +263,26 @@ class LogCSV:
         "status_exibido", "contador", "perdidos_seguidos", "ruins_medidos", "razao_cb",
     ]
 
-    def __init__(self, pasta):
+    def __init__(self, pasta, versao=None):
         self.pasta = pasta
         os.makedirs(pasta, exist_ok=True)
+        self.versao = versao if versao is not None else versao_codigo()
         self.data_atual = None
         self.arquivo = None
         self.escritor = None
         self.ultimo_flush = 0.0
+        self.ultima_conferencia = 0.0
 
     def _garantir_arquivo(self):
         hoje = datetime.now().strftime("%Y-%m-%d")
         if hoje == self.data_atual:
+            if time.monotonic() - self.ultima_conferencia > INTERVALO_CONFERE_TETO_S:
+                self.ultima_conferencia = time.monotonic()
+                limpar_antigos(self.pasta, GRUPO_QUADROS, max_dias=MAX_DIAS, teto_bytes=TETO_QUADROS)
             return
         self.fechar()
+        limpar_antigos(self.pasta, GRUPO_QUADROS, max_dias=MAX_DIAS, teto_bytes=TETO_QUADROS)
+        self.ultima_conferencia = time.monotonic()
         caminho = os.path.join(self.pasta, f"postura_{hoje}.csv")
         versao = 2
         while os.path.exists(caminho) and not self._mesmo_cabecalho(caminho):
@@ -265,6 +294,7 @@ class LogCSV:
         self.escritor = csv.writer(self.arquivo)
         if novo:
             self.escritor.writerow(self.CABECALHO)
+        self.arquivo.write(linha_versao("postura", self.versao))
         self.data_atual = hoje
 
     def _mesmo_cabecalho(self, caminho):
@@ -282,6 +312,8 @@ class LogCSV:
                 valor = campos.get(coluna, "")
                 if isinstance(valor, float):
                     valor = f"{valor:.3f}"
+                elif isinstance(valor, str):
+                    valor = valor.replace("#", "n.")   # "#" viraria comentário no pandas
                 linha.append("" if valor is None else valor)
             self.escritor.writerow(linha)
             agora = time.time()
@@ -361,7 +393,9 @@ class MonitorPostura:
 
     def __init__(self, preview=False, video_inicial=None):
         self.detector = DetectorPostura()
-        self.log = LogCSV(DIR_LOGS)
+        self.eventos = RegistroEventos("postura")
+        self.log = LogCSV(DIR_LOGS, versao=self.eventos.versao)
+        self._status_evento = None   # último status gravado no arquivo de eventos
         self.comandos = queue.Queue()
         self.lock = threading.Lock()
         self.rodando = True
@@ -407,6 +441,11 @@ class MonitorPostura:
             self.estado["texto"] = texto
             self.estado["atualizado"] = datetime.now().strftime("%H:%M:%S")
             fonte, video = self.estado["fonte"], self.estado["video"]
+            fps_atual = self.estado.get("fps") or 0.0
+
+        if status != self._status_evento:     # eventos: só quando o estado MUDA
+            self._status_evento = status
+            self.eventos.registrar(ORIGEM_POSTURA, "estado", detalhe_estado(status, fps_atual))
 
         imprimir = (
             status != self._status_impresso
@@ -491,6 +530,8 @@ class MonitorPostura:
                 proxima = self._sessao(*proxima)
         finally:
             self.log.fechar()
+            self.eventos.servico_parou("postura")
+            self.eventos.fechar()
             if self.preview:
                 cv2.destroyAllWindows()
             try:
@@ -657,6 +698,9 @@ class MonitorPostura:
                 msg = "Calibração falhou (poucas detecções válidas). Confira se você aparece na câmera."
             # na tela fica cheio o ponto que apareceu em pelo menos metade dos quadros
             resumo = {nome: faltas[nome] * 2 < max(frames_lidos, 1) for nome in PONTOS}
+            self.eventos.registrar(ORIGEM_POSTURA, "calibracao_falhou",
+                                   f"{tipo} {falta or 'poucas deteccoes validas'} "
+                                   f"validos={len(amostras_angulo)}/{frames_lidos}")
             self.mostrar_status("CALIBRACAO_FALHOU", msg, forcar=True, pontos_visiveis=resumo)
             self._registrar_fim("calibracao", ok=False, msg=msg)
             return ("falhou",)
@@ -667,6 +711,9 @@ class MonitorPostura:
             salvar_baseline(baseline_angulo, baseline_razao)
 
         msg = f"Baseline calibrada: ângulo={baseline_angulo:.1f}°  razão_pescoço={baseline_razao:.3f}"
+        self.eventos.registrar(ORIGEM_POSTURA, "calibracao_ok",
+                               f"{tipo} angulo={baseline_angulo:.2f} razao={baseline_razao:.4f} "
+                               f"validos={len(amostras_angulo)}/{frames_lidos}")
         with self.lock:
             fonte, video = self.estado["fonte"], self.estado["video"]
         self.mostrar_status(
@@ -676,7 +723,7 @@ class MonitorPostura:
         )
         self._registrar_fim("calibracao", ok=True, msg=msg)
         self.log.registrar(
-            data_hora=datetime.now().isoformat(timespec="milliseconds"),
+            data_hora=agora_iso(),
             fonte=fonte, video=video or "", status="CALIBRADO",
             baseline_angulo=baseline_angulo, baseline_razao=baseline_razao,
         )
@@ -891,7 +938,7 @@ class MonitorPostura:
             with self.lock:
                 fonte, video = self.estado["fonte"], self.estado["video"]
             self.log.registrar(
-                data_hora=datetime.now().isoformat(timespec="milliseconds"),
+                data_hora=agora_iso(),
                 fonte=fonte, video=video or "",
                 status=resultado.status,             # o que o quadro mostrou (SEM_USUARIO honesto)
                 angulo=angulo, razao_pescoco=razao,
@@ -1084,6 +1131,9 @@ def main():
         print("Janela: 'q' encerra, 'r' recalibra.", flush=True)
 
     monitor = MonitorPostura(preview=preview, video_inicial=video_inicial)
+    monitor.eventos.servico_iniciou("postura")
+    print(f"Eventos em {monitor.eventos.arquivo.pasta} | versão do código: {monitor.eventos.versao}",
+          flush=True)
 
     def parar(_sinal, _quadro):
         monitor.rodando = False
