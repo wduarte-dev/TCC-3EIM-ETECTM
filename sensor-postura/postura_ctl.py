@@ -4,6 +4,8 @@ Controle remoto do monitor de postura. Instalado como o comando `postura`.
 
     postura status        o que está rodando agora
     postura recalibrar    calibra (contagem de 10s pra se ajeitar, mostrada aqui)
+    postura pausar        pausa a medição e desliga a câmera (igual a segurar o B1 ~5 s)
+    postura retomar       volta a medir (recalibra)
     postura gravar N      grava N segundos da webcam em videos/ (N maior que 5)
     postura janela        abre o monitor com a janela da câmera (precisa de ssh -X)
     postura foto          salva um JPEG do último quadro com os 3 pontos (baixe com scp)
@@ -241,6 +243,10 @@ def main():
         cmd_recalibrar()
     elif comando == "gravar":
         cmd_gravar(argumento)
+    elif comando == "pausar":
+        mostrar_resposta(enviar({"acao": "pausar"}))
+    elif comando == "retomar":
+        mostrar_resposta(enviar({"acao": "retomar"}))
     elif comando in ("janela", "videocapture", "preview", "ver"):
         cmd_janela()
     elif comando == "log":

@@ -34,6 +34,22 @@ def enviar(pedido, caminho=CAMINHO_SOCKET_POSTURA, timeout=TIMEOUT_POSTURA_S):
         cliente.close()
 
 
+# No descanso do pomodoro a pessoa deve levantar: "sem usuário" é esperado e avisar
+# postura não faz sentido. Esses status viram "POSTURA: DESCANSO" na tela (o log do
+# serviço continua gravando tudo; cruzar descanso × SEM_USUARIO é inferência).
+STATUS_ESCONDIDOS_NO_DESCANSO = ("CORRETA", "CALIBRADO", "ATENCAO", "ALERTA", "SEM_USUARIO")
+TEXTO_DESCANSO = "POSTURA: DESCANSO"
+
+
+def escondido_no_descanso(estado, descanso):
+    return bool(descanso and estado and estado.get("status") in STATUS_ESCONDIDOS_NO_DESCANSO)
+
+
+def texto_tela(estado, descanso=False):
+    """Texto da linha de postura considerando o descanso do pomodoro."""
+    return TEXTO_DESCANSO if escondido_no_descanso(estado, descanso) else texto_curto(estado)
+
+
 def texto_curto(estado):
     """
     Estado do serviço → texto curto pra caber na linha da tela (≤ 128 px na DejaVu
@@ -62,6 +78,8 @@ def texto_curto(estado):
         return "SEM CAMERA"
     if status == "SEM_USUARIO":
         return "SEM USUARIO"
+    if status == "PAUSADO":
+        return "POSTURA: PAUSADA"
     return status[:21] or "..."
 
 
@@ -95,6 +113,12 @@ class MonitorPostura:
             resposta = enviar({"acao": "status"})
             self.estado = resposta.get("estado") if resposta and resposta.get("ok") else None
             time.sleep(self.intervalo)
+
+    def pausar_ou_retomar(self):
+        """B1 segurado ≥ 5 s: pausa a medição, ou retoma se já está pausada. Devolve qual."""
+        acao = "retomar" if (self.estado or {}).get("status") == "PAUSADO" else "pausar"
+        threading.Thread(target=enviar, args=({"acao": acao},), daemon=True).start()
+        return acao
 
     def recalibrar(self):
         """Pede recalibração em outra thread (não segura a tela). Devolve a thread."""
