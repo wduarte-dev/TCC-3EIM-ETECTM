@@ -4,6 +4,7 @@ comando de controle (postura_ctl.py).
 
 Ajuste os limiares AQUI — os dois arquivos leem deste mesmo lugar.
 """
+import math
 import os
 import socket
 import sys
@@ -60,12 +61,13 @@ FRAMES_PARA_ALERTA = 60
 # VALORES PROVISÓRIOS, escolha do projeto, a definir com os dados do estudo (rajadas de
 # SEM_USUARIO dentro de postura ruim). Origem:
 #   PERDAS_TOLERADAS: no simulador aprovado eram 2 com escala de 6 quadros (1/3); 1/3 de 15 = 5.
-#   MINIMO_RUINS_MEDIDOS: o ALERTA (16 quadros) não pode vir majoritariamente de quadros
-#   perdidos → pelo menos metade medida = 8.
-#   ATENÇÃO (20/11): N e M foram derivados do limiar ANTIGO (15/16 quadros) e foram mantidos
-#   sem mudança quando o FRAMES_PARA_ALERTA passou pra 60; a "metade medida" não vale mais.
+#   MINIMO_RUINS_MEDIDOS: o ALERTA não pode vir majoritariamente de quadros perdidos →
+#   pelo menos METADE dos quadros do ALERTA (FRAMES_PARA_ALERTA + 1) tem que ser medida.
+#   É regra de definição do método (como a gente mede), não valor empírico; acompanha o
+#   limiar sozinha: 16 quadros → 8 (valor antigo); 61 quadros → 31.
+#   PERDAS_TOLERADAS continua 5 (derivado do limiar antigo; não é proporcional ao limiar).
 PERDAS_TOLERADAS = 5          # N: perdas SEGUIDAS que ainda contam como indício (em quadros)
-MINIMO_RUINS_MEDIDOS = 8      # M: quadros ruins MEDIDOS exigidos pra afirmar ALERTA
+MINIMO_RUINS_MEDIDOS = math.ceil((FRAMES_PARA_ALERTA + 1) / 2)   # M: metade, arredondada pra cima
 
 # --- Comportamento headless ---
 CONTAGEM_CALIBRACAO = 10      # segundos pra se ajeitar depois do `postura recalibrar` (ao vivo)

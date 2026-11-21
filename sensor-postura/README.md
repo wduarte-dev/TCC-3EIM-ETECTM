@@ -51,10 +51,12 @@ são guardados; a decisão do serviço não usa.
    limite do que a câmera capta. Até `PERDAS_TOLERADAS` (5) perdas **seguidas** contam como
    indício (o contador sobe e a tela continua em ATENÇÃO/ALERTA); passou disso, conclui que a
    pessoa saiu do enquadramento, zera e mostra `SEM_USUARIO`. Uma perda sem sequência ruim
-   antes não inicia nada. **Trava:** o ALERTA exige pelo menos `MINIMO_RUINS_MEDIDOS` (8)
-   quadros ruins **medidos**, pra não sair majoritariamente de quadros perdidos. É
-   **inferência por regras (máquina de estados), não IA**. Os valores 5 e 8 são
-   **provisórios**, escolha do projeto, a definir com os dados do estudo.
+   antes não inicia nada. **Trava:** o ALERTA exige que pelo menos **metade** dos quadros do
+   ALERTA seja de quadros ruins **medidos** (`MINIMO_RUINS_MEDIDOS`, calculado a partir do
+   limiar: 61 quadros → 31), pra não sair majoritariamente de quadros perdidos. Essa metade
+   é regra de definição do método, não valor empírico. É **inferência por regras (máquina de
+   estados), não IA**. O 5 de `PERDAS_TOLERADAS` é **provisório**, escolha do projeto, a
+   definir com os dados do estudo.
 5. **Enquadramento (quais pontos a câmera vê):** na contagem da calibração o MoveNet já roda,
    e o status (`pontos_visiveis`) diz se a orelha, o ombro do lado dela e o outro ombro estão
    visíveis (confiança > 0,4). O pomodoro desenha isso no OLED como 3 pontos (cheio/vazado), e o
