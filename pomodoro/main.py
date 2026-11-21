@@ -8,7 +8,8 @@ Pomodoro com display OLED + 3 botões, ligado ao monitor de postura.
 
 Botões:
     B1 (GPIO17)  RECALIBRAÇÃO (não mexe no pomodoro):
-                 curto alterna POSTURA → WIFI CONECTAR, longo executa a opção mostrada
+                 curto alterna POSTURA → WIFI CONECTAR, longo executa a opção mostrada;
+                 segurar ≥ 5 s e soltar pausa a medição de postura (de novo: retoma e recalibra)
                  (na espera do Wi-Fi, clique curto cancela)
     B2 (GPIO27)  SELEÇÃO: curto troca o preset, longo inicia
                  rodando/pausado: curto pausa/retoma, longo volta pra seleção
@@ -23,16 +24,29 @@ import time
 
 from pomodoro_config import (
     ATUALIZACAO_TELA_S, PISCAR_MUDANCA_FASE_S,
-    POLARIDADE_BOTOES, PULL_INTERNO_BOTOES,
+    POLARIDADE_BOTOES, PULL_INTERNO_BOTOES, LIMITE_LONGO_S, LIMITE_PAUSA_POSTURA_S,
 )
-from pomodoro_logica import Pomodoro, EV_FASE_MUDOU, CURTO, LONGO, MUITO_LONGO, SELECAO
+from pomodoro_logica import (Pomodoro, EV_FASE_MUDOU, CURTO, LONGO, MUITO_LONGO, SELECAO,
+                             PAUSA, PAUSA_LONGA)
+from botoes import PAUSA_POSTURA
 import presets
 from recalibracao import MenuB1, POSTURA, WIFI
-from postura_cliente import MonitorPostura, texto_curto, pontos_enquadramento
+from postura_cliente import MonitorPostura, texto_tela, pontos_enquadramento, escondido_no_descanso
 from wifi import WifiConectar
 from display import criar_display, desenhar, desenhar_wifi_espera, desenhar_wifi_resultado
 from energia import Desligamento, TEXTO_DESLIGANDO
 from registro_pomodoro import LogPomodoro
+
+
+def texto_segurando_b1(botoes, menu, estado_postura):
+    """Dica enquanto o B1 está apertado: depois de 5 s, soltar pausa/retoma a postura."""
+    segurando = botoes.aperto_b1.segurando_ha()
+    verbo = "RETOMAR" if (estado_postura or {}).get("status") == "PAUSADO" else "PAUSAR"
+    if segurando >= LIMITE_PAUSA_POSTURA_S:
+        return f"SOLTE: {verbo}"
+    if segurando >= LIMITE_LONGO_S and not menu.aberto:
+        return f"SEGURE 5s: {verbo}"
+    return None
 
 
 def main():
@@ -115,6 +129,10 @@ def main():
                     continue
                 if wifi.ocupado:
                     continue                     # resultado na tela: só espera sumir
+                if tipo == PAUSA_POSTURA:        # segurou ≥ 5 s: pausa/retoma a postura
+                    menu.fechar()
+                    log.pausa_postura_b1(monitor.pausar_ou_retomar())
+                    continue
                 acao = menu.botao(tipo)
                 if acao:
                     _, opcao = acao
@@ -146,7 +164,10 @@ def main():
                 POSTURA: (estado_postura or {}).get("status") != "AGUARDANDO_CALIBRACAO",
             }
             texto_b3 = desligamento.texto(botoes.aperto_b3.segurando_ha())
-            texto_baixo = texto_b3 or wifi.mensagem() or menu.texto(segurando_b1, calibrado)
+            texto_baixo = (texto_b3 or wifi.mensagem() or texto_segurando_b1(botoes, menu, estado_postura)
+                           or menu.texto(segurando_b1, calibrado))
+            descanso = pomo.estado in (PAUSA, PAUSA_LONGA)
+            esconder = escondido_no_descanso(estado_postura, descanso)
             tela_wifi = None if texto_b3 else wifi.tela    # o B3 sempre aparece por cima
             if tela_wifi and tela_wifi[0] == "espera":
                 tela.mostrar(desenhar_wifi_espera(*tela_wifi[1:]))
@@ -158,11 +179,11 @@ def main():
                 continue
             imagem = desenhar(
                 pomo,
-                texto_baixo or texto_curto(estado_postura),
-                status_postura=None if texto_baixo else (estado_postura or {}).get("status"),
+                texto_baixo or texto_tela(estado_postura, descanso),
+                status_postura=None if texto_baixo or esconder else (estado_postura or {}).get("status"),
                 segurando_tipo=segurando if segurando in (LONGO, MUITO_LONGO) else None,
                 piscando=agora < piscar_ate and int(agora * 2) % 2 == 0,   # pisca ~2x por segundo
-                pontos=None if texto_baixo else pontos_enquadramento(estado_postura),
+                pontos=None if texto_baixo or esconder else pontos_enquadramento(estado_postura),
             )
             tela.mostrar(imagem)
 

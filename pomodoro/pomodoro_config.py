@@ -46,6 +46,7 @@ AMOSTRAS_ESTAVEIS = 4
 # No B1 só importa curto × longo; "muito longo" conta como longo.
 LIMITE_LONGO_S = 1.0         # até aqui = curto; daqui até o próximo limite = longo
 LIMITE_MUITO_LONGO_S = 3.0   # a partir daqui = muito longo (no B3, desliga o Pi)
+LIMITE_PAUSA_POSTURA_S = 5.0 # só no B1: soltar depois disso pausa/retoma a medição de postura
 
 # --- B3: desligar o Pi ---
 # "sudo -n": não pede senha (falha na hora se precisar de uma). Como root, sem sudo.

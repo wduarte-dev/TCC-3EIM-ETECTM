@@ -14,6 +14,7 @@ Botões. Duas partes:
      - BotoesTeclado: digitar no terminal, pra testar no notebook
          1c → B1 curto             2c → B2 curto           3m → B3 muito longo
          1l → B1 longo             2l → B2 longo           (3c e 3l existem, mas o B3 ignora)
+         1p → B1 segurado ≥ 5 s (pausa/retoma a postura)
                                    2m → B2 muito longo
 
 Todos mandam os eventos pra uma fila (queue.Queue): ("B1" | "B2" | "B3", tipo).
@@ -24,10 +25,12 @@ import threading
 import time
 
 from pomodoro_config import (
-    GPIO_B1, GPIO_B2, GPIO_B3, LIMITE_LONGO_S, LIMITE_MUITO_LONGO_S,
+    GPIO_B1, GPIO_B2, GPIO_B3, LIMITE_LONGO_S, LIMITE_MUITO_LONGO_S, LIMITE_PAUSA_POSTURA_S,
     POLARIDADE_BOTOES, PULL_INTERNO_BOTOES, AUTO_OCIOSO_S, AMOSTRA_S, AMOSTRAS_ESTAVEIS,
 )
 from pomodoro_logica import CURTO, LONGO, MUITO_LONGO
+
+PAUSA_POSTURA = "pausa_postura"   # só no B1: soltou com ≥ LIMITE_PAUSA_POSTURA_S
 
 
 def classificar(duracao_s, limite_longo=LIMITE_LONGO_S, limite_muito_longo=LIMITE_MUITO_LONGO_S):
@@ -45,6 +48,7 @@ class ClassificadorAperto:
     def __init__(self, relogio=time.monotonic):
         self._relogio = relogio
         self._inicio = None
+        self.ultima_duracao = 0.0     # duração do último aperto (s), pra o B1 saber se foi ≥ 5 s
 
     def apertou(self):
         if self._inicio is None:      # ignora repique de "apertou" sem ter soltado
@@ -56,6 +60,7 @@ class ClassificadorAperto:
             return None
         duracao = self._relogio() - self._inicio
         self._inicio = None
+        self.ultima_duracao = duracao
         return classificar(duracao)
 
     def segurando_ha(self):
@@ -211,7 +216,7 @@ class BotoesGPIO:
                 for nome, entrada in self._entradas.items():
                     tipo = entrada.amostrar(self._nivel(self._dispositivos[nome]))
                     if tipo:
-                        self.fila.put((nome, tipo))
+                        self.fila.put((nome, tipo_do_aperto(nome, tipo, entrada.aperto.ultima_duracao)))
             except Exception as erro:   # um erro de leitura não pode matar os botões em silêncio
                 if self._ativo:
                     self._log(f"erro lendo botoes: {erro!r}")
@@ -224,10 +229,17 @@ class BotoesGPIO:
             disp.close()
 
 
+def tipo_do_aperto(nome, tipo, duracao, limite_pausa=LIMITE_PAUSA_POSTURA_S):
+    """O B1 ganha um 4º tipo: soltar com ≥ 5 s pausa/retoma a postura. Os outros, iguais."""
+    if nome == "B1" and duracao >= limite_pausa:
+        return PAUSA_POSTURA
+    return tipo
+
+
 class BotoesTeclado:
     """Simula os botões digitando no terminal (uma linha + Enter por aperto)."""
 
-    COMANDOS = {"1c": ("B1", CURTO), "1l": ("B1", LONGO),
+    COMANDOS = {"1c": ("B1", CURTO), "1l": ("B1", LONGO), "1p": ("B1", PAUSA_POSTURA),
                 "2c": ("B2", CURTO), "2l": ("B2", LONGO), "2m": ("B2", MUITO_LONGO),
                 "3c": ("B3", CURTO), "3l": ("B3", LONGO), "3m": ("B3", MUITO_LONGO)}
 
@@ -240,7 +252,7 @@ class BotoesTeclado:
         threading.Thread(target=self._ler, daemon=True).start()
 
     def _ler(self):
-        print("Botões simulados:  1c = B1 curto | 1l = B1 longo | 2c = B2 curto | "
+        print("Botões simulados:  1c = B1 curto | 1l = B1 longo | 1p = B1 5 s (pausa postura) | 2c = B2 curto | "
               "2l = B2 longo | 2m = B2 muito longo | 3m = B3 muito longo (desliga) | q = sair", flush=True)
         while self._ativo:
             linha = sys.stdin.readline()

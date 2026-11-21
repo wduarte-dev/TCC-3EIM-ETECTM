@@ -72,6 +72,10 @@ class LogPomodoro:
             self.eventos.registrar(ORIGEM_POMODORO, evento, detalhe)
         self._ultima = atual
 
+    def pausa_postura_b1(self, acao):
+        """B1 segurado ≥ 5 s pediu pausar/retomar a postura (o serviço grava se aconteceu)."""
+        self.eventos.registrar(ORIGEM_POMODORO, f"b1_{acao}_postura", "")
+
     def desligar_b3(self):
         """O B3 pediu o poweroff (vai com fsync: separa desligamento pedido de queda)."""
         self.eventos.registrar(ORIGEM_SISTEMA, "desligar_b3", "poweroff pedido pelo B3")

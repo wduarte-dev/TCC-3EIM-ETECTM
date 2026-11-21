@@ -98,6 +98,30 @@ class TesteEventosDoServico(unittest.TestCase):
         self.assertEqual(ps.detalhe_estado("ATENCAO", 0.0), "ATENCAO")
         self.assertEqual(ps.detalhe_estado("ATENCAO", 2.345), "ATENCAO fps=2.3")
 
+    def test_pausa_grava_eventos_e_retoma_recalibrando(self):
+        with mock.patch("builtins.print"), \
+                mock.patch.object(self.m, "_dormir", lambda s: self.m.comandos.put(("retomar", None))):
+            proxima = self.m._pausado()
+        self.assertEqual(proxima, ("live", None))
+        self.assertTrue(self.m._recalibrar_pendente)
+        self.assertEqual([e[1:] for e in self.eventos()], [
+            ("medicao_pausada", ""), ("estado", "PAUSADO"), ("medicao_retomada", ""),
+        ])
+
+    def test_comandos_pausar_e_retomar(self):
+        with self.m.lock:
+            self.m.estado["status"] = "CORRETA"
+        self.assertFalse(self.m._tratar_comando({"acao": "retomar"})["ok"])   # não está pausada
+        self.assertTrue(self.m._tratar_comando({"acao": "pausar"})["ok"])
+        self.assertEqual(self.m.comandos.get_nowait(), ("pausar", None))
+        with self.m.lock:
+            self.m.estado["status"] = "CALIBRANDO"
+        self.assertFalse(self.m._tratar_comando({"acao": "pausar"})["ok"])    # calibrando: espera
+        with self.m.lock:
+            self.m.estado["status"] = "PAUSADO"
+        self.assertTrue(self.m._tratar_comando({"acao": "retomar"})["ok"])
+        self.assertEqual(self.m.comandos.get_nowait(), ("retomar", None))
+
 
 
 @unittest.skipIf(ps is None, "sem OpenCV/numpy")

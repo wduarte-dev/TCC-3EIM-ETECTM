@@ -387,6 +387,7 @@ def carregar_baseline_do_mesmo_boot():
 # =====================================================================
 
 TEXTO_AGUARDANDO = "AGUARDANDO CALIBRAÇÃO (digite: postura recalibrar)"
+TEXTO_PAUSADO = "MEDIÇÃO PAUSADA: câmera desligada (digite: postura retomar)"
 
 
 class MonitorPostura:
@@ -527,6 +528,9 @@ class MonitorPostura:
         proxima = ("video", self.video_inicial) if self.video_inicial else ("live", None)
         try:
             while self.rodando:
+                if proxima[0] == "pausar":
+                    proxima = self._pausado()
+                    continue
                 proxima = self._sessao(*proxima)
         finally:
             self.log.fechar()
@@ -575,7 +579,7 @@ class MonitorPostura:
         while self.rodando:
             comando = self._pegar_comando()
             if comando:
-                if comando[0] == "video":
+                if comando[0] in ("video", "pausar"):
                     return comando
                 if comando[0] == "recalibrar":
                     self._recalibrar_pendente = True  # calibra assim que a câmera voltar
@@ -594,6 +598,30 @@ class MonitorPostura:
                 forcar=True, pontos_visiveis=None,
             )
             self._dormir(ESPERA_CAMERA_S)
+        return ("live", None)
+
+    def _pausado(self):
+        """
+        Medição pausada (B1 segurado ~5 s ou `postura pausar`). A câmera já foi fechada
+        pela sessão (economiza CPU e corrente; não medido). Espera `retomar` e, ao
+        retomar, volta pra câmera ao vivo já recalibrando (a pessoa pode ter mudado de
+        lugar). Pausa e retomada vão pro arquivo de eventos.
+        """
+        self._baseline_guardada = None
+        self.eventos.registrar(ORIGEM_POSTURA, "medicao_pausada", "")
+        with self.lock:
+            self.estado.update(fonte="live", video=None, baseline_angulo=None, baseline_razao=None,
+                               desvio_angulo=None, queda_razao_pct=None, fps=0.0)
+        while self.rodando:
+            comando = self._pegar_comando()
+            if comando and comando[0] in ("retomar", "recalibrar", "live", "video"):
+                self.eventos.registrar(ORIGEM_POSTURA, "medicao_retomada", "")
+                if comando[0] == "video":
+                    return comando
+                self._recalibrar_pendente = True
+                return ("live", None)
+            self.mostrar_status("PAUSADO", TEXTO_PAUSADO, pontos_visiveis=None)
+            self._dormir(1.0)
         return ("live", None)
 
     def _calibrar(self, cap, tipo, fps_video):
@@ -1071,12 +1099,26 @@ class MonitorPostura:
                 return {"ok": False, "erro": f"A duração tem que ser maior que {DURACAO_CALIBRACAO}s "
                                              f"(os primeiros {DURACAO_CALIBRACAO}s são a calibração) "
                                              f"e no máximo {GRAVACAO_MAX_S}s."}
+            if status_atual == "PAUSADO":
+                return {"ok": False, "erro": "A medição está pausada (câmera desligada). Antes: postura retomar"}
             if fonte_atual != "live" or status_atual == "SEM_CAMERA":
                 return {"ok": False, "erro": "Só dá pra gravar com a câmera ao vivo funcionando (use: postura live)."}
             if ocupado:
                 return {"ok": False, "erro": "Já tem uma calibração ou gravação em andamento. Espera terminar."}
             self.comandos.put(("gravar", segundos))
             return {"ok": True, "msg": f"Gravação de {segundos}s: contagem de {CONTAGEM_GRAVACAO}s pra se ajeitar."}
+        if acao == "pausar":
+            if status_atual == "PAUSADO":
+                return {"ok": True, "msg": "A medição já está pausada. Pra voltar: postura retomar"}
+            if ocupado:
+                return {"ok": False, "erro": "Já tem uma calibração ou gravação em andamento. Espera terminar."}
+            self.comandos.put(("pausar", None))
+            return {"ok": True, "msg": "Pausando a medição (câmera desligada). Pra voltar: postura retomar"}
+        if acao == "retomar":
+            if status_atual != "PAUSADO":
+                return {"ok": False, "erro": "A medição não está pausada."}
+            self.comandos.put(("retomar", None))
+            return {"ok": True, "msg": f"Retomando: contagem de {CONTAGEM_CALIBRACAO}s e recalibração."}
         return {"ok": False, "erro": f"comando desconhecido: {acao}"}
 
 

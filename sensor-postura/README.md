@@ -155,6 +155,8 @@ python postura_servico.py --preview
 ```bash
 postura status        # o que está rodando agora (fonte, status, baseline, FPS)
 postura recalibrar    # contagem de 10s (mostrada no terminal) + 5s de coleta
+postura pausar        # pausa a medição e fecha a câmera (igual a segurar o B1 ~5 s)
+postura retomar       # volta a medir: contagem de 10s + recalibração
 postura gravar 30     # grava 30s da webcam em videos/ (precisa ser mais que 5s)
 postura janela        # abre o monitor com a janela da câmera (precisa de ssh -X)
 postura foto          # JPEG do último quadro com os 3 pontos e o status (baixe com scp)

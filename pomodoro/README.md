@@ -53,7 +53,8 @@ dos botões vai num adesivo na caixa.
 | **curto** | abre o menu na linha de baixo (`RECALIBRAR: POSTURA`); cada novo clique alterna **POSTURA → WIFI CONECTAR**. Antes da primeira calibração da postura aparece `CALIBRAR: POSTURA` |
 | **longo** (≥ 1 s) | **executa a opção mostrada** (enquanto segura: `SOLTE: RECAL POSTURA` / `SOLTE: WIFI CONECTAR`); o menu fecha |
 | sem clique por 5 s | o menu fecha sozinho (`MENU_B1_TIMEOUT_S`) e a linha de baixo volta a mostrar a postura |
-| longo com o menu fechado | ignorado (aperto longo sem querer não faz nada) |
+| longo com o menu fechado | ignorado (aperto longo sem querer não faz nada); a partir de 1 s a linha mostra `SEGURE 5s: PAUSAR` |
+| **segurar ≥ 5 s e soltar** (20/11) | **pausa a medição de postura** (o serviço fecha a câmera e para a análise; a tela mostra `POSTURA: PAUSADA`). De novo: **retoma e recalibra** (contagem de 10 s). Enquanto segura, aos 5 s: `SOLTE: PAUSAR` / `SOLTE: RETOMAR`. Vale com o menu aberto ou fechado. Pausa e retomada vão pros eventos (`b1_pausar_postura` aqui; `medicao_pausada`/`medicao_retomada` no serviço) |
 | **curto na tela de espera do Wi-Fi** | cancela e volta à tela inicial |
 
 - **Postura:** o pedido vai pro serviço (`postura recalibrar`) e a própria linha de baixo mostra as mensagens do serviço (`COMEÇANDO EM: 7s`, `CALIBRANDO...`...), com os 3 pontos do enquadramento.
@@ -131,6 +132,12 @@ clique (usabilidade × segurança contra toque acidental; não testado no Pi).
 - **Linha de baixo (postura):** `POSTURA: BOA`, `POSTURA: ATENÇÃO`, `POSTURA: RUIM` (linha invertida),
   `POSTURA: SEM SERVIÇO` (serviço de postura fora), `COMEÇANDO EM: 7s` (contagem da calibração). Os
   outros avisos (`APERTE B1: CALIBRAR`, `CALIBRANDO...`, `SEM CAMERA`...) seguem como eram.
+  `POSTURA: PAUSADA` quando a medição foi pausada pelo B1 (20/11).
+- **Descanso do pomodoro (pausa curta e longa, 20/11):** a linha mostra `POSTURA: DESCANSO` no lugar
+  de `BOA`/`ATENÇÃO`/`RUIM`/`SEM USUARIO` (a pessoa deve levantar: "sem usuário" é esperado). Falhas
+  (`SEM SERVIÇO`, `SEM CAMERA`), calibração e `PAUSADA` aparecem normalmente. O serviço de postura
+  continua gravando tudo no log; cruzar descanso × `SEM_USUARIO` é inferência, não prova de que a
+  pessoa saiu.
 
 ## Enquadramento: os 3 pontos na tela
 

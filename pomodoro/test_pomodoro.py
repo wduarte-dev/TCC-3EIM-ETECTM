@@ -1045,5 +1045,56 @@ class TesteLogPomodoro(unittest.TestCase):
         self.assertEqual((linha["origem"], linha["evento"]), ("sistema", "desligar_b3"))
 
 
+class TestePausaDaPostura(unittest.TestCase):
+    """20/11: B1 segurado ≥ 5 s pausa/retoma a postura; descanso do pomodoro esconde a postura."""
+
+    def test_so_o_b1_com_5s_vira_pausa(self):
+        from botoes import tipo_do_aperto, PAUSA_POSTURA
+        self.assertEqual(tipo_do_aperto("B1", LONGO, 4.9), LONGO)          # menu, como antes
+        self.assertEqual(tipo_do_aperto("B1", MUITO_LONGO, 5.0), PAUSA_POSTURA)
+        self.assertEqual(tipo_do_aperto("B3", MUITO_LONGO, 6.0), MUITO_LONGO)  # B3 continua desligando
+        self.assertEqual(tipo_do_aperto("B2", MUITO_LONGO, 6.0), MUITO_LONGO)
+
+    def test_classificador_guarda_a_duracao(self):
+        tempo = [0.0]
+        c = ClassificadorAperto(relogio=lambda: tempo[0])
+        c.apertou()
+        tempo[0] = 5.2
+        c.soltou()
+        self.assertAlmostEqual(c.ultima_duracao, 5.2)
+
+    def test_tela_no_descanso_e_pausada(self):
+        from postura_cliente import texto_tela, escondido_no_descanso
+        for status in ("CORRETA", "ATENCAO", "ALERTA", "SEM_USUARIO"):
+            self.assertEqual(texto_tela({"status": status}, descanso=True), "POSTURA: DESCANSO")
+        self.assertEqual(texto_tela({"status": "ALERTA"}, descanso=False), "POSTURA: RUIM")
+        self.assertEqual(texto_tela({"status": "PAUSADO"}, descanso=False), "POSTURA: PAUSADA")
+        self.assertEqual(texto_tela({"status": "PAUSADO"}, descanso=True), "POSTURA: PAUSADA")
+        self.assertEqual(texto_tela(None, descanso=True), "POSTURA: SEM SERVIÇO")     # falha aparece
+        self.assertFalse(escondido_no_descanso({"status": "CONTAGEM"}, True))          # calibrando aparece
+
+    def test_dica_enquanto_segura_o_b1(self):
+        from main import texto_segurando_b1
+
+        class Aperto:
+            def __init__(self, s):
+                self.s = s
+
+            def segurando_ha(self):
+                return self.s
+
+        class Botoes:
+            def __init__(self, s):
+                self.aperto_b1 = Aperto(s)
+
+        menu = MenuB1()
+        self.assertIsNone(texto_segurando_b1(Botoes(0.5), menu, None))
+        self.assertEqual(texto_segurando_b1(Botoes(2.0), menu, None), "SEGURE 5s: PAUSAR")
+        self.assertEqual(texto_segurando_b1(Botoes(5.1), menu, {"status": "PAUSADO"}), "SOLTE: RETOMAR")
+        menu.botao(CURTO)                                                   # menu aberto: 1–5 s é do menu
+        self.assertIsNone(texto_segurando_b1(Botoes(2.0), menu, None))
+        self.assertEqual(texto_segurando_b1(Botoes(5.0), menu, None), "SOLTE: PAUSAR")
+
+
 if __name__ == "__main__":
     unittest.main()
