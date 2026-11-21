@@ -47,7 +47,12 @@ LIMIAR_DESVIO_ANGULO = 12.0   # Graus de desvio lateral tolerados em relação �
 LIMIAR_QUEDA_RAZAO = 0.12     # Queda tolerada na razão pescoço/ombros (0.12 = 12%)
 DURACAO_CALIBRACAO = 5        # segundos coletando amostras da postura correta
 HISTORICO_TAMANHO = 5         # tamanho da média móvel
-FRAMES_PARA_ALERTA = 15       # ALERTA quando o contador de postura ruim PASSA disso (16º quadro)
+# ALERTA quando o contador de postura ruim PASSA disso (61º quadro). VALOR PROVISÓRIO (20/11):
+# mirado em 10 a 20 s de má postura antes do ALERTA. Conta com o fps medido no Pi em 18–20/11
+# (~4,1 fps, com throttling): 61 ÷ 4,1 ≈ 15 s. O fps varia com a carga, então o tempo real é
+# uma FAIXA, não um valor fixo. Nenhuma fonte da literatura pra este valor (escolha do projeto).
+# Antes: 15 (16º quadro, ≈ 3,7 s a 4,1 fps).
+FRAMES_PARA_ALERTA = 60
 
 # --- Contador de ALERTA que usa as perdas de detecção (T3, "informative missingness") ---
 # Perder os pontos (SEM_USUARIO) no meio de uma sequência ruim é indício de que a pessoa
@@ -57,6 +62,8 @@ FRAMES_PARA_ALERTA = 15       # ALERTA quando o contador de postura ruim PASSA d
 #   PERDAS_TOLERADAS: no simulador aprovado eram 2 com escala de 6 quadros (1/3); 1/3 de 15 = 5.
 #   MINIMO_RUINS_MEDIDOS: o ALERTA (16 quadros) não pode vir majoritariamente de quadros
 #   perdidos → pelo menos metade medida = 8.
+#   ATENÇÃO (20/11): N e M foram derivados do limiar ANTIGO (15/16 quadros) e foram mantidos
+#   sem mudança quando o FRAMES_PARA_ALERTA passou pra 60; a "metade medida" não vale mais.
 PERDAS_TOLERADAS = 5          # N: perdas SEGUIDAS que ainda contam como indício (em quadros)
 MINIMO_RUINS_MEDIDOS = 8      # M: quadros ruins MEDIDOS exigidos pra afirmar ALERTA
 

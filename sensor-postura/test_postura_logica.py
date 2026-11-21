@@ -127,11 +127,11 @@ class TesteDecisao(unittest.TestCase):
     def test_sem_pontos_e_sem_usuario(self):
         self.assertEqual(pl.AvaliadorPostura(*BASE).avaliar(None).status, pl.SEM_USUARIO)
 
-    def test_alerta_so_depois_de_15_quadros_ruins(self):
+    def test_alerta_so_depois_de_k_quadros_ruins(self):
         av = pl.AvaliadorPostura(*BASE)
         estados = [av.avaliar(tombado(40)).status for _ in range(FRAMES_PARA_ALERTA + 1)]
         self.assertEqual(estados[:FRAMES_PARA_ALERTA], [pl.ATENCAO] * FRAMES_PARA_ALERTA)
-        self.assertEqual(estados[-1], pl.ALERTA)       # 16º quadro (contador > 15)
+        self.assertEqual(estados[-1], pl.ALERTA)       # quadro K+1 (contador > K)
 
     def test_queda_da_cabeca_tambem_alerta(self):
         av = pl.AvaliadorPostura(*BASE)
@@ -198,20 +198,22 @@ def rodar(texto, **kw):
 class TesteContadorDeAlerta(unittest.TestCase):
     """T3: perdas de detecção no meio de uma sequência ruim contam como indício."""
 
-    def test_sem_perdas_continua_alertando_no_16o_quadro(self):
-        _, saida = rodar("R*16")
-        self.assertEqual(saida[14].status_exibido, pl.ATENCAO)
-        self.assertEqual(saida[15].status_exibido, pl.ALERTA)
+    def test_sem_perdas_continua_alertando_no_quadro_k_mais_1(self):
+        K = FRAMES_PARA_ALERTA
+        _, saida = rodar(f"R*{K + 1}")
+        self.assertEqual(saida[K - 1].status_exibido, pl.ATENCAO)
+        self.assertEqual(saida[K].status_exibido, pl.ALERTA)
 
     def test_perda_curta_no_meio_conta_e_tela_segue_na_decisao(self):
-        av, saida = rodar("R*5 S R*10")
+        K = FRAMES_PARA_ALERTA
+        av, saida = rodar(f"R*5 S R*{K - 5}")
         self.assertEqual(saida[5].status, pl.SEM_USUARIO)          # CSV: dado honesto
         self.assertEqual(saida[5].status_exibido, pl.ATENCAO)       # tela: segue a sequência
-        self.assertEqual(av.contador, 16)
+        self.assertEqual(av.contador, K + 1)
         self.assertEqual(saida[-1].status_exibido, pl.ALERTA)       # 1 quadro antes que sem perdas
 
     def test_padrao_aviso_sem_aviso_sem_vira_alerta(self):
-        _, saida = rodar("R S " * 8)
+        _, saida = rodar("R S " * ((FRAMES_PARA_ALERTA + 2) // 2))   # contador passa de K
         self.assertEqual(saida[-1].status, pl.SEM_USUARIO)
         self.assertEqual(saida[-1].status_exibido, pl.ALERTA)
 
@@ -227,8 +229,15 @@ class TesteContadorDeAlerta(unittest.TestCase):
         self.assertEqual(av.contador, 0)
 
     def test_trava_alerta_nao_vem_majoritariamente_de_perdas(self):
-        # 1 ruim medido + perdas toleradas alternando: contador passa de 15, mas medidos < M
-        av, saida = rodar("R S*5 R S*5 R S*5", minimo_medidos=MINIMO_RUINS_MEDIDOS)
+        # M-1 ruins medidos, cada um seguido de N perdas; se ainda não passou de K, um quadro
+        # correto zera as perdas seguidas (desconta 1) e vêm mais N perdas (+N-1 por bloco).
+        # Contador passa de K, mas medidos < M.
+        K, N, M = FRAMES_PARA_ALERTA, PERDAS_TOLERADAS, MINIMO_RUINS_MEDIDOS
+        partes, contador = [f"R S*{N}"] * (M - 1), (M - 1) * (N + 1)
+        while contador <= K:
+            partes.append(f"C S*{N}")
+            contador += N - 1
+        av, saida = rodar(" ".join(partes), minimo_medidos=M)
         self.assertGreater(av.contador, FRAMES_PARA_ALERTA)
         self.assertLess(av.medidos, MINIMO_RUINS_MEDIDOS)
         self.assertEqual(saida[-1].status_exibido, pl.ATENCAO)

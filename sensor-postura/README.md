@@ -42,7 +42,10 @@ são guardados; a decisão do serviço não usa.
      câmera. Alerta se a razão **cair** mais de **12%** em relação à baseline. Aumentar
      a razão não gera alerta.
 4. **Média móvel** de 5 leituras (tira a tremedeira) + **contador**: cada quadro ruim
-   soma 1, cada quadro correto desconta 1, e vira ALERTA quando o contador passa de 15.
+   soma 1, cada quadro correto desconta 1, e vira ALERTA quando o contador passa de 60
+   (`FRAMES_PARA_ALERTA`, 61º quadro; era 15 até 20/11). **Valor provisório:** mirado em
+   10–20 s de má postura; a ~4,1 fps (medido no Pi em 18–20/11, com throttling) dá ≈ 15 s, mas
+   o fps varia com a carga, então o tempo real é uma faixa. Sem fonte na literatura pro valor.
    **Perder os pontos também é informação (T3):** se o MoveNet perde a pessoa no meio de
    uma sequência ruim (`RUIM → SEM → RUIM → SEM`), é provável que ela esteja encurvada no
    limite do que a câmera capta. Até `PERDAS_TOLERADAS` (5) perdas **seguidas** contam como
