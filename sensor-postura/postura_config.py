@@ -69,6 +69,13 @@ FRAMES_PARA_ALERTA = 60
 PERDAS_TOLERADAS = 5          # N: perdas SEGUIDAS que ainda contam como indício (em quadros)
 MINIMO_RUINS_MEDIDOS = math.ceil((FRAMES_PARA_ALERTA + 1) / 2)   # M: metade, arredondada pra cima
 
+# --- Saída do ALERTA (20/11, igual à "tolerância" do avisa_pi.py) ---
+# Depois que entra em ALERTA, a tela só volta pra CORRETA com este tanto de quadros BONS
+# SEGUIDOS; ao sair, o contador zera (fim do episódio). Ruim ou perda no meio reinicia.
+# VALOR PROVISÓRIO, escolha do projeto, sem fonte: 12 ÷ 4,1 fps (medido, com throttling)
+# ≈ 3 s; o tempo real é uma faixa (depende do fps). 0 = saída instantânea (comportamento antigo).
+QUADROS_PARA_SAIR_ALERTA = 12
+
 # --- Comportamento headless ---
 CONTAGEM_CALIBRACAO = 10      # segundos pra se ajeitar depois do `postura recalibrar` (ao vivo)
 CONTAGEM_GRAVACAO = 5         # segundos pra se ajeitar depois do `postura gravar N`
