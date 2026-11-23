@@ -24,6 +24,7 @@ import unicodedata
 from dataclasses import dataclass
 
 from display import formatar_tempo, _texto_fase
+from energia import TEXTO_DESLIGANDO
 from pomodoro_config import (
     LCD_COLUNAS, LCD_LINHAS, LCD_PRESET_CICLO_S, LCD_PRESET_MOSTRA_S,
     LCD_ROLAGEM_CPS, LCD_ALERTA_PISCA_HZ, LCD_WIFI_CREDENCIAIS_S,
@@ -208,6 +209,8 @@ def _topo_rodando(pomo, agora):
 def desenhar(pomo, texto_postura, status_postura=None, segurando_tipo=None, piscando=False,
              pontos=None):
     """Mesma assinatura do display.desenhar(); devolve um Quadro 16x2."""
+    if texto_postura == TEXTO_DESLIGANDO:                 # B3 executado: DESLIGADO ocupa a tela toda
+        return _fechar_quadro([_encaixar(_celulas("DESLIGADO"), "centro")] * 2)
     if piscando:
         return _fechar_quadro([_linha_cheia(), _linha_cheia()])
     agora = time.monotonic()
@@ -340,14 +343,6 @@ class DisplayLCD:
                 self._lcd.posicao(n, 0)
                 self._lcd.escrever(codigos)
                 self._ultimas[n] = codigos
-
-    def apagar_apos_aviso(self, segundos):
-        """Desligamento pelo B3: deixa o aviso `segundos` s e apaga o texto (display desligado).
-        O backlight NÃO apaga: A está direto no 5 V, que o Pi desligado continua fornecendo."""
-        time.sleep(segundos)
-        self._lcd.limpar()
-        self._lcd.ligar_tela(False)
-        self._lcd.fechar()
 
     def fechar(self):
         self._lcd.limpar()

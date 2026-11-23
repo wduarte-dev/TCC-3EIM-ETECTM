@@ -55,6 +55,10 @@ class TestQuadro(unittest.TestCase):
         for t in textos:
             self.assertLessEqual(len(L.compactar(t)), 16, t)
 
+    def test_desligando_vira_desligado_na_tela_toda(self):
+        q = L.desenhar(Pomodoro(PRESET), energia.TEXTO_DESLIGANDO)
+        self.assertEqual(q.texto(), ["   DESLIGADO    "] * 2)
+
     def test_com_os_3_pontos_o_texto_cabe_em_13(self):
         for t in ("COMEÇANDO EM: 10s", "CALIBRANDO...", "CALIBRACAO FALHOU", "SEM USUARIO"):
             self.assertLessEqual(len(L.compactar(t, 13)), 13, t)
@@ -138,25 +142,6 @@ class TestQuadro(unittest.TestCase):
 
 
 class TestBackend(unittest.TestCase):
-    def test_desligando_espera_o_aviso_e_apaga_o_texto(self):
-        chamadas = []
-
-        class LCD:
-            def limpar(self):
-                chamadas.append("limpar")
-
-            def ligar_tela(self, ligada=True):
-                chamadas.append(("tela", ligada))
-
-            def fechar(self):
-                chamadas.append("fechar")
-
-        tela = L.DisplayLCD.__new__(L.DisplayLCD)
-        tela._lcd = LCD()
-        with mock.patch("display_lcd.time.sleep", side_effect=lambda s: chamadas.append(("espera", s))):
-            tela.apagar_apos_aviso(3.0)
-        self.assertEqual(chamadas, [("espera", 3.0), "limpar", ("tela", False), "fechar"])
-
     def test_so_grava_cgram_e_linha_quando_muda(self):
         tela = L.DisplayLCD.__new__(L.DisplayLCD)
         tela._lcd = FakeCGRAM()
