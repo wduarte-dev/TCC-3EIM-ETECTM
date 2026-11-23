@@ -64,6 +64,7 @@ Type=simple
 User=$USUARIO
 WorkingDirectory=$DIR
 Environment=PYTHONUNBUFFERED=1
+ExecStartPre=-/bin/bash "$DIR/../atualizar_codigo.sh"
 ExecStart="$PY" "$DIR/postura_servico.py"
 Restart=always
 RestartSec=3
