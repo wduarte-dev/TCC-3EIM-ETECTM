@@ -76,7 +76,7 @@ linha de protoboard.
 - **Ícones e acentos** (Ç, Ã...) são caracteres desenhados em 5x8 na CGRAM, que só guarda **8 por
   tela**; se faltar vaga, a letra perde o acento. A ROM japonesa do LCD troca `\` por ¥ e `~` por →:
   esses dois também ganham desenho próprio (podem aparecer na senha do Wi-Fi).
-- **Desligar pelo B3:** o aviso `DESLIGANDO...` fica 3 s (`LCD_APAGAR_APOS_S`) e o texto é apagado (display desligado).
+- **Desligar pelo B3:** no LCD, ao executar (soltar depois de 3 s) a tela toda vira `DESLIGADO` e fica assim. A luz azul não apaga: o 5 V do Pi continua ligado depois do halt. **Só tire da tomada quando o LED verde do Pi parar de piscar**, senão corrompe o cartão SD.
   **A luz azul continua acesa**: o Pi desligado ainda manda 5 V pro pino e o backlight está direto nele
   (inferência; confirmar que o SSH caiu). Só apaga tirando da tomada ou com um transistor no backlight
   (não feito). **Só tire da tomada depois que o LED verde do Pi parar de piscar.**
