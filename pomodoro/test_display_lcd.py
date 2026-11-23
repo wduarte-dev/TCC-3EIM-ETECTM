@@ -120,6 +120,17 @@ class TestQuadro(unittest.TestCase):
                       L.desenhar_wifi_resultado(False, "UMA REDE COM NOME BEM COMPRIDO")):
                 self.checar(q)
 
+    def test_wifi_espera_mostra_rede_e_senha_juntas_no_comeco(self):
+        L._espera.update(inicio=None, ultima=0.0)
+        textos = []
+        for k in range(0, 56):                       # 14 s a 4 quadros/s, como no laço do main
+            with tempo(500.0 + k * 0.25):
+                textos.append(L.desenhar_wifi_espera("DIHMO", "admin1234", 1).texto())
+        self.assertEqual(textos[0], ["REDE: DIHMO     ", "SENHA: admin1234"])
+        self.assertEqual(textos[int(5.5 / 0.25)], textos[0])          # ainda na 1ª página aos 5,5 s
+        self.assertTrue(textos[int(6.5 / 0.25)][0].startswith("#"))   # depois vem o CONECTANDO...
+        self.assertTrue(any("CANCELAR" in t[1] for t in textos))
+
     def test_rolagem_vai_do_comeco_ao_fim(self):
         texto = "ABCDEFGHIJKLMNOPQRST"
         self.assertEqual(L.rolar(texto, 16, t=0.0), texto[:16])
@@ -127,6 +138,25 @@ class TestQuadro(unittest.TestCase):
 
 
 class TestBackend(unittest.TestCase):
+    def test_desligando_espera_o_aviso_e_apaga_o_texto(self):
+        chamadas = []
+
+        class LCD:
+            def limpar(self):
+                chamadas.append("limpar")
+
+            def ligar_tela(self, ligada=True):
+                chamadas.append(("tela", ligada))
+
+            def fechar(self):
+                chamadas.append("fechar")
+
+        tela = L.DisplayLCD.__new__(L.DisplayLCD)
+        tela._lcd = LCD()
+        with mock.patch("display_lcd.time.sleep", side_effect=lambda s: chamadas.append(("espera", s))):
+            tela.apagar_apos_aviso(3.0)
+        self.assertEqual(chamadas, [("espera", 3.0), "limpar", ("tela", False), "fechar"])
+
     def test_so_grava_cgram_e_linha_quando_muda(self):
         tela = L.DisplayLCD.__new__(L.DisplayLCD)
         tela._lcd = FakeCGRAM()

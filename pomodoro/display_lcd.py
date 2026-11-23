@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from display import formatar_tempo, _texto_fase
 from pomodoro_config import (
     LCD_COLUNAS, LCD_LINHAS, LCD_PRESET_CICLO_S, LCD_PRESET_MOSTRA_S,
-    LCD_ROLAGEM_CPS, LCD_ALERTA_PISCA_HZ,
+    LCD_ROLAGEM_CPS, LCD_ALERTA_PISCA_HZ, LCD_WIFI_CREDENCIAIS_S,
     LCD_GPIO_RS, LCD_GPIO_E, LCD_GPIO_D4, LCD_GPIO_D5, LCD_GPIO_D6, LCD_GPIO_D7,
 )
 from pomodoro_logica import SELECAO, PAUSADO
@@ -244,40 +244,53 @@ def desenhar(pomo, texto_postura, status_postura=None, segurando_tipo=None, pisc
 
 # ------------------------------------------------------ telas cheias do Wi-Fi --
 _PAGINA_S = 2.5
+_espera = {"inicio": None, "ultima": 0.0}      # pra a 1ª página (rede e senha) valer desde o começo da espera
+
+
+def _linha_wifi(prefixo, valor):
+    texto = prefixo + valor
+    return texto if len(texto) <= COLS else prefixo.strip() + valor     # REDE:xxxx
+
+
+def _rolar_desde(texto, t, atraso=1.0):
+    """Mostra o começo por `atraso` s e depois rola até o fim (texto curto = igual)."""
+    if len(texto) <= COLS:
+        return texto
+    desloc = min(len(texto) - COLS, max(0, int((t - atraso) * LCD_ROLAGEM_CPS)))
+    return texto[desloc:desloc + COLS]
 
 
 def _paginas_wifi(ssid, senha):
-    paginas = []
-    for prefixo, valor in (("REDE: ", ssid), ("SENHA: ", senha)):
-        texto = prefixo + valor
-        if len(texto) > COLS:
-            texto = prefixo.strip() + valor               # REDE:xxxx
-        paginas.append(texto)
-    paginas += ["BANDA: 2.4 GHZ", "CLIQUE: CANCELAR"]     # o Pi 3B só tem Wi-Fi 2.4 GHz
-    return paginas
-
-
-def _duracao_pagina(texto):
-    if len(texto) <= COLS:
-        return _PAGINA_S
-    return 3.0 + (len(texto) - COLS) / LCD_ROLAGEM_CPS    # dá tempo de rolar até o fim
+    """[(duração_s, linha1, linha2)]. A 1ª página mostra REDE e SENHA JUNTAS pelo tempo que o
+    Wellington pediu (LCD_WIFI_CREDENCIAIS_S); depois alternam o CONECTANDO... e os avisos."""
+    rede, chave = _linha_wifi("REDE: ", ssid), _linha_wifi("SENHA: ", senha)
+    sobra = max(len(rede), len(chave)) - COLS
+    credenciais = max(LCD_WIFI_CREDENCIAIS_S, 2.0 + max(0, sobra) / LCD_ROLAGEM_CPS)   # dá tempo de rolar
+    return [
+        (credenciais, rede, chave),
+        (_PAGINA_S, None, "BANDA: 2.4 GHZ"),               # o Pi 3B só tem Wi-Fi 2.4 GHz
+        (_PAGINA_S, None, "CLIQUE: CANCELAR"),
+    ]
 
 
 def desenhar_wifi_espera(ssid, senha, pontos=3):
-    """Linha 1: ícone + CONECTANDO... ; linha 2 alterna rede, senha, banda e como cancelar."""
-    topo = [ICONE_WIFI, " "] + _celulas("CONECTANDO" + "." * pontos)
+    """1ª página: REDE e SENHA nas 2 linhas. Depois: ícone + CONECTANDO... em cima e, embaixo,
+    a banda e como cancelar. Recomeça pela 1ª página quando a tela volta (nova tentativa)."""
+    agora = time.monotonic()
+    if _espera["inicio"] is None or agora - _espera["ultima"] > 1.5:
+        _espera["inicio"] = agora                          # a tela não estava sendo desenhada: nova espera
+    _espera["ultima"] = agora
     paginas = _paginas_wifi(ssid, senha)
-    duracoes = [_duracao_pagina(p) for p in paginas]
-    t = time.monotonic() % sum(duracoes)
-    for texto, dur in zip(paginas, duracoes):
+    t = (agora - _espera["inicio"]) % sum(d for d, _, _ in paginas)
+    for dur, l1, l2 in paginas:
         if t < dur:
             break
         t -= dur
-    if len(texto) > COLS:                                 # rola a partir do início da página
-        passos = len(texto) - COLS
-        desloc = min(passos, max(0, int((t - 1.0) * LCD_ROLAGEM_CPS)))
-        texto = texto[desloc:desloc + COLS]
-    return _fechar_quadro([topo, _encaixar(_celulas(texto), "centro")])
+    if l1 is not None:                                     # página das credenciais
+        return _fechar_quadro([_encaixar(_celulas(_rolar_desde(l1, t))),
+                               _encaixar(_celulas(_rolar_desde(l2, t)))])
+    topo = [ICONE_WIFI, " "] + _celulas("CONECTANDO" + "." * pontos)
+    return _fechar_quadro([topo, _encaixar(_celulas(l2), "centro")])
 
 
 def desenhar_wifi_resultado(ok, ssid):
@@ -327,6 +340,14 @@ class DisplayLCD:
                 self._lcd.posicao(n, 0)
                 self._lcd.escrever(codigos)
                 self._ultimas[n] = codigos
+
+    def apagar_apos_aviso(self, segundos):
+        """Desligamento pelo B3: deixa o aviso `segundos` s e apaga o texto (display desligado).
+        O backlight NÃO apaga: A está direto no 5 V, que o Pi desligado continua fornecendo."""
+        time.sleep(segundos)
+        self._lcd.limpar()
+        self._lcd.ligar_tela(False)
+        self._lcd.fechar()
 
     def fechar(self):
         self._lcd.limpar()
