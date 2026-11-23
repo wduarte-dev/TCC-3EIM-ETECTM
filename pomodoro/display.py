@@ -6,6 +6,9 @@ Tela de 128x64. Duas partes:
 2. Backends: OLED (luma.oled/SSD1306 via I2C), emulador pygame (notebook) e PNG
    (grava um arquivo; funciona até por SSH).
 
+O LCD 16x2 (23/11/2026) tem as telas dele em display_lcd.py (mesmas funções, mesma
+lógica); criar_display() e telas_para() escolhem entre os dois.
+
 Fonte: DejaVu Sans Bold (tem acentos). Sem ela, o Pillow cai na fonte padrão e os
 acentos somem: o instalar.sh avisa se faltar (pacote fonts-dejavu-core).
 """
@@ -252,7 +255,21 @@ class DisplayPNG:
         pass
 
 
+def telas_para(nome):
+    """As 3 funções de desenho certas pro display escolhido (LCD 16x2 ou 128x64)."""
+    if nome.startswith("lcd"):
+        import display_lcd
+        return display_lcd.desenhar, display_lcd.desenhar_wifi_espera, display_lcd.desenhar_wifi_resultado
+    return desenhar, desenhar_wifi_espera, desenhar_wifi_resultado
+
+
 def criar_display(nome):
+    if nome == "lcd":
+        from display_lcd import DisplayLCD
+        return DisplayLCD()
+    if nome == "lcd-png":
+        from display_lcd import DisplayLCDPNG
+        return DisplayLCDPNG()
     if nome == "oled":
         return DisplayOLED()
     if nome == "pygame":

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Pomodoro com display OLED + 3 botões, ligado ao monitor de postura.
+Pomodoro com display (LCD 16x2 ou OLED 128x64) + 3 botões, ligado ao monitor de postura.
 
-    No Pi (OLED e botões de verdade):      python main.py
-    No notebook (sem hardware):            python main.py --display png --botoes teclado
+    No Pi (LCD e botões de verdade):       python main.py          (OLED: --display oled)
+    No notebook (sem hardware):            python main.py --display lcd-png --botoes teclado
     Demo acelerada (1 s real = 1 min):     python main.py --display png --botoes teclado --velocidade 60
 
 Botões:
@@ -23,7 +23,7 @@ import sys
 import time
 
 from pomodoro_config import (
-    ATUALIZACAO_TELA_S, PISCAR_MUDANCA_FASE_S,
+    ATUALIZACAO_TELA_S, PISCAR_MUDANCA_FASE_S, DISPLAY_PADRAO,
     POLARIDADE_BOTOES, PULL_INTERNO_BOTOES, LIMITE_LONGO_S, LIMITE_PAUSA_POSTURA_S,
 )
 from pomodoro_logica import (Pomodoro, EV_FASE_MUDOU, CURTO, LONGO, MUITO_LONGO, SELECAO,
@@ -33,7 +33,7 @@ import presets
 from recalibracao import MenuB1, POSTURA, WIFI
 from postura_cliente import MonitorPostura, texto_tela, pontos_enquadramento, escondido_no_descanso
 from wifi import WifiConectar
-from display import criar_display, desenhar, desenhar_wifi_espera, desenhar_wifi_resultado
+from display import criar_display, telas_para
 from energia import Desligamento, TEXTO_DESLIGANDO
 from registro_pomodoro import LogPomodoro
 
@@ -51,7 +51,8 @@ def texto_segurando_b1(botoes, menu, estado_postura):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--display", choices=["oled", "pygame", "png"], default="oled")
+    ap.add_argument("--display", choices=["lcd", "oled", "lcd-png", "png", "pygame"], default=DISPLAY_PADRAO,
+                    help="lcd = LCD 16x2 (padrão) | oled = OLED 128x64 | lcd-png/png/pygame = sem hardware")
     ap.add_argument("--botoes", choices=["gpio", "teclado"], default="gpio")
     ap.add_argument("--polaridade", choices=["auto", "alto", "baixo"], default=POLARIDADE_BOTOES,
                     help="OUT do módulo: auto = descobre lendo o botão solto (não aperte nada ao iniciar); "
@@ -62,11 +63,14 @@ def main():
                     help="multiplica a passagem do tempo (60 = 1 s real vale 1 min; só pra demo/teste)")
     args = ap.parse_args()
 
+    desenhar, desenhar_wifi_espera, desenhar_wifi_resultado = telas_para(args.display)
     try:
         tela = criar_display(args.display)
     except Exception as erro:   # I2C sem resposta, biblioteca ausente...
         sys.exit(f"Não consegui abrir o display '{args.display}': {erro}\n"
-                 "  No Pi: confira a ligação e rode `i2cdetect -y 1` (tem que aparecer 3c).")
+                 + ("  No Pi: confira a ligação do LCD (claude/hardware.md) e o gpiozero no venv."
+                  if args.display == "lcd" else
+                  "  No Pi: confira a ligação e rode `i2cdetect -y 1` (tem que aparecer 3c)."))
 
     fila = queue.Queue()
     if args.botoes == "gpio":
