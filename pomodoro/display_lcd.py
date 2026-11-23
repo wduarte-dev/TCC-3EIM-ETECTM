@@ -341,6 +341,14 @@ class DisplayLCD:
                 self._lcd.escrever(codigos)
                 self._ultimas[n] = codigos
 
+    def apagar_apos_aviso(self, segundos):
+        """Desligamento pelo B3: deixa o aviso `segundos` s e apaga o texto (display desligado).
+        O backlight NÃO apaga: A está direto no 5 V, que o Pi desligado continua fornecendo."""
+        time.sleep(segundos)
+        self._lcd.limpar()
+        self._lcd.ligar_tela(False)
+        self._lcd.fechar()
+
     def fechar(self):
         self._lcd.limpar()
         self._lcd.fechar()
