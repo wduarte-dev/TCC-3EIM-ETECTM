@@ -23,7 +23,7 @@ import sys
 import time
 
 from pomodoro_config import (
-    ATUALIZACAO_TELA_S, PISCAR_MUDANCA_FASE_S, DISPLAY_PADRAO,
+    ATUALIZACAO_TELA_S, PISCAR_MUDANCA_FASE_S, DISPLAY_PADRAO, LCD_APAGAR_APOS_S,
     POLARIDADE_BOTOES, PULL_INTERNO_BOTOES, LIMITE_LONGO_S, LIMITE_PAUSA_POSTURA_S,
 )
 from pomodoro_logica import (Pomodoro, EV_FASE_MUDOU, CURTO, LONGO, MUITO_LONGO, SELECAO,
@@ -200,6 +200,9 @@ def main():
     if desligamento.em_andamento:
         # o systemd manda SIGTERM ao desligar: deixa o aviso na tela em vez de apagá-la
         tela.mostrar(desenhar(pomo, TEXTO_DESLIGANDO))
+        apagar = getattr(tela, "apagar_apos_aviso", None)       # só o LCD: o OLED mantém o aviso
+        if apagar:
+            apagar(LCD_APAGAR_APOS_S)
     else:
         tela.fechar()
 

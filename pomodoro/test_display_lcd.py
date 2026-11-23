@@ -138,6 +138,25 @@ class TestQuadro(unittest.TestCase):
 
 
 class TestBackend(unittest.TestCase):
+    def test_desligando_espera_o_aviso_e_apaga_o_texto(self):
+        chamadas = []
+
+        class LCD:
+            def limpar(self):
+                chamadas.append("limpar")
+
+            def ligar_tela(self, ligada=True):
+                chamadas.append(("tela", ligada))
+
+            def fechar(self):
+                chamadas.append("fechar")
+
+        tela = L.DisplayLCD.__new__(L.DisplayLCD)
+        tela._lcd = LCD()
+        with mock.patch("display_lcd.time.sleep", side_effect=lambda s: chamadas.append(("espera", s))):
+            tela.apagar_apos_aviso(3.0)
+        self.assertEqual(chamadas, [("espera", 3.0), "limpar", ("tela", False), "fechar"])
+
     def test_so_grava_cgram_e_linha_quando_muda(self):
         tela = L.DisplayLCD.__new__(L.DisplayLCD)
         tela._lcd = FakeCGRAM()
