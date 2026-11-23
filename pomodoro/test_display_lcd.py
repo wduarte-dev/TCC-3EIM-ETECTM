@@ -145,5 +145,76 @@ class TestBackend(unittest.TestCase):
         self.assertEqual(len(tela._lcd.escritos), n)
 
 
+class PinoFalso:
+    def __init__(self, pino, initial_value=False):
+        self.pino, self.value = pino, int(initial_value)
+
+    def on(self):
+        self.value = 1
+
+    def off(self):
+        self.value = 0
+
+    def close(self):
+        pass
+
+
+class TestDriver(unittest.TestCase):
+    """Decodifica os nibbles que o driver manda (na descida do E) e confere o protocolo."""
+
+    def setUp(self):
+        import sys
+        import types
+        import lcd_hd44780 as H
+        self.H = H
+        self.eventos = []
+        fake = types.ModuleType("gpiozero")
+        fake.DigitalOutputDevice = PinoFalso
+        self._antigo = sys.modules.get("gpiozero")
+        sys.modules["gpiozero"] = fake
+        self._sleep = H.time.sleep
+        H.time.sleep = lambda s: None
+        eventos = self.eventos
+        self._pulso = H.LCD4Bits._pulso
+
+        def pulso(lcd):
+            nibble = sum(int(p.value) << i for i, p in enumerate(lcd._dados))
+            eventos.append((int(lcd._rs.value), nibble))
+        H.LCD4Bits._pulso = pulso
+
+    def tearDown(self):
+        import sys
+        self.H.time.sleep = self._sleep
+        self.H.LCD4Bits._pulso = self._pulso
+        if self._antigo is None:
+            sys.modules.pop("gpiozero", None)
+        else:
+            sys.modules["gpiozero"] = self._antigo
+
+    def bytes_(self, eventos):
+        return [(eventos[i][0], (eventos[i][1] << 4) | eventos[i + 1][1]) for i in range(0, len(eventos), 2)]
+
+    def test_inicializacao_segue_o_datasheet(self):
+        self.H.LCD4Bits(5, 6, 13, 19, 26, 16)
+        self.assertEqual([n for _, n in self.eventos[:4]], [0x3, 0x3, 0x3, 0x2])   # reset ×3, depois 4 bits
+        comandos = [b for rs, b in self.bytes_(self.eventos[4:])]
+        self.assertEqual(comandos, [0x28, 0x08, 0x01, 0x06, 0x0C])   # 2 linhas, apaga, limpa, entrada, liga
+
+    def test_posicao_e_texto(self):
+        lcd = self.H.LCD4Bits(5, 6, 13, 19, 26, 16)
+        self.eventos.clear()
+        lcd.posicao(1, 0)
+        lcd.escrever(b"Oi")
+        self.assertEqual(self.bytes_(self.eventos), [(0, 0xC0), (1, 0x4F), (1, 0x69)])   # linha 2 = 0x40
+
+    def test_cgram(self):
+        lcd = self.H.LCD4Bits(5, 6, 13, 19, 26, 16)
+        self.eventos.clear()
+        lcd.criar_caractere(2, (1, 2, 3, 4, 5, 6, 7, 8))
+        dados = self.bytes_(self.eventos)
+        self.assertEqual(dados[0], (0, 0x40 | (2 << 3)))
+        self.assertEqual([b for _, b in dados[1:]], [1, 2, 3, 4, 5, 6, 7, 8])
+
+
 if __name__ == "__main__":
     unittest.main()

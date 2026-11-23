@@ -48,6 +48,10 @@ linha de protoboard.
 - **3,3 V no GPIO serve:** com o LCD em 5 V, o datasheet do HD44780U dá entrada alta mínima de 2,2 V.
   Alguns clones pedem 0,7·VCC (3,5 V): se o LCD não responder de jeito nenhum, é uma suspeita.
 - **Driver próprio** (`lcd_hd44780.py`, sobre o gpiozero que os botões já usam): sem dependência nova.
+- **Teste de bancada:** `python ../teste_lcd.py` (na raiz do repo; `--contraste` pra regular o V0,
+  `--telas` pras telas reais do pomodoro). Precisa de `pip install gpiozero lgpio` (o gpiozero cai num
+  backend próprio se o `lgpio` não compilar; pra compilar o `lgpio` precisa de `swig` e `python3-dev`).
+  Pare o serviço antes: `sudo systemctl stop pomodoro`.
 - **Primeiro teste:** só com alimentação + trimpot, a linha de cima mostra 16 blocos escuros
   (ajuste o trimpot até aparecerem). Blocos sem texto depois de rodar o programa = RS/E ou
   D4–D7 trocados.
