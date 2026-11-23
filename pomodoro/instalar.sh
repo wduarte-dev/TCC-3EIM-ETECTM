@@ -53,6 +53,7 @@ Type=simple
 User=$USUARIO
 WorkingDirectory=$DIR
 Environment=PYTHONUNBUFFERED=1
+ExecStartPre=-/bin/bash "$DIR/../atualizar_codigo.sh"
 ExecStart="$PY" "$DIR/main.py"
 Restart=always
 RestartSec=3

@@ -299,6 +299,8 @@ anote a mensagem de erro: ainda não foi testado nesse ambiente.
 Pra iniciar no boot: `bash instalar.sh` (sem `sudo` na frente). Depois:
 `sudo journalctl -u pomodoro -f` acompanha o log e `sudo systemctl restart pomodoro` reinicia.
 
+**Atualização automática:** os serviços `pomodoro` e `postura` rodam `atualizar_codigo.sh` (na raiz do repo) antes de iniciar: `git pull --ff-only origin main`, uma tentativa de até 20 s. Sem rede, com alteração local ou divergência ele só avisa no `journalctl` e o serviço sobe com o código atual (nunca trava a subida). O código novo só vale no próximo boot/restart. Pra desligar: `touch ~/.tcc-sem-atualizar` (`rm` pra voltar). Quem já instalou precisa rodar `bash instalar.sh` de novo uma vez (o serviço antigo não tem essa linha).
+
 **Teste de bancada dos botões (Pi desligado da câmera/serviço):** `sudo systemctl stop pomodoro` e
 `python diagnostico_botoes.py` (5 s sem tocar; depois 5 cliques curtos em cada botão e um aperto de ~2 s; Ctrl+C mostra o resumo).
 Depois `python main.py` e confira no log a polaridade descoberta de cada botão.

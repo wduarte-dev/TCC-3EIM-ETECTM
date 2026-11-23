@@ -129,6 +129,8 @@ Ele acha o `~/venv-tcc` sozinho. Se o venv estiver em outro lugar:
 
 **Atualizar depois:** `git pull && postura reiniciar`
 
+**Atualização automática:** os serviços `pomodoro` e `postura` rodam `atualizar_codigo.sh` (na raiz do repo) antes de iniciar: `git pull --ff-only origin main`, uma tentativa de até 20 s. Sem rede, com alteração local ou divergência ele só avisa no `journalctl` e o serviço sobe com o código atual (nunca trava a subida). O código novo só vale no próximo boot/restart. Pra desligar: `touch ~/.tcc-sem-atualizar` (`rm` pra voltar). Quem já instalou precisa rodar `bash instalar.sh` de novo uma vez (o serviço antigo não tem essa linha).
+
 ## Rodando no Windows (desenvolvimento/demo)
 
 O mesmo código roda no Windows; o Raspberry Pi continua igual. Não há serviço
