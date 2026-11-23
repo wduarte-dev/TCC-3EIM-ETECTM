@@ -1,7 +1,8 @@
-# Pomodoro (display OLED + 3 botões)
+# Pomodoro (display LCD 16x2 ou OLED + 3 botões)
 
-Timer de foco/pausa que roda no Raspberry Pi e mostra tudo no display OLED
-128x64. Também mostra, na linha de baixo, o status do monitor de postura
+Timer de foco/pausa que roda no Raspberry Pi e mostra tudo no display: desde 23/11/2026 o
+padrão é o **LCD 16x2** (HD44780, por GPIO); o OLED 128x64 continua funcionando com
+`--display oled` (ou `DISPLAY_PADRAO = "oled"` no `pomodoro_config.py`). Também mostra, na linha de baixo, o status do monitor de postura
 (`sensor-postura/`) e deixa o usuário recalibrar a **postura** ou **conectar o Wi-Fi**
 pelo botão B1. O B3 desliga o Pi.
 
@@ -21,7 +22,58 @@ Os botões são **3 módulos de 3 pinos (VCC, OUT, GND)**. Ligar **pelo nome imp
 | OUT do **B2** | pino 13 (GPIO27): pomodoro (tabela abaixo) |
 | OUT do **B3** | pino 15 (GPIO22): **desligar o Pi** (seção abaixo) |
 
-Não usar os pinos 3 e 5 (I2C do display).
+Não usar os pinos 3 e 5 (I2C do OLED) nem os do LCD (abaixo).
+
+## Display LCD 16x2 (padrão desde 23/11)
+
+LCD HD44780 em **modo 4 bits** (6 GPIO). Pi desligado ao ligar os fios; 5 V e GND emendados numa
+linha de protoboard.
+
+| LCD | Liga em | Pi |
+|---|---|---|
+| 1 VSS | GND | pino 39 |
+| 2 VDD | 5 V | pino 4 |
+| 3 V0 | cursor de um trimpot de 10 kΩ (pontas em 5 V e GND): contraste | |
+| 4 RS | GPIO5 | pino 29 |
+| 5 RW | **GND** (só escrita: o LCD nunca devolve 5 V pro GPIO) | pino 39 |
+| 6 E | GPIO6 | pino 31 |
+| 7–10 D0–D3 | soltos | |
+| 11 D4 | GPIO13 | pino 33 |
+| 12 D5 | GPIO19 | pino 35 |
+| 13 D6 | GPIO26 | pino 37 |
+| 14 D7 | GPIO16 | pino 36 |
+| 15 A | 5 V **com resistor de 220 Ω** (backlight) | pino 4 |
+| 16 K | GND | pino 39 |
+
+- **3,3 V no GPIO serve:** com o LCD em 5 V, o datasheet do HD44780U dá entrada alta mínima de 2,2 V.
+  Alguns clones pedem 0,7·VCC (3,5 V): se o LCD não responder de jeito nenhum, é uma suspeita.
+- **Driver próprio** (`lcd_hd44780.py`, sobre o gpiozero que os botões já usam): sem dependência nova.
+- **Primeiro teste:** só com alimentação + trimpot, a linha de cima mostra 16 blocos escuros
+  (ajuste o trimpot até aparecerem). Blocos sem texto depois de rodar o programa = RS/E ou
+  D4–D7 trocados.
+
+**Telas no LCD** (`display_lcd.py`; a lógica é a mesma, só o desenho muda). Cada parte tem
+**uma linha inteira**: linha 1 = pomodoro, linha 2 = postura (no OLED a postura era uma faixa de 9 px).
+
+| Tela | Linha 1 | Linha 2 |
+|---|---|---|
+| Escolha | `TEMPO       25/5` (B2 segurado: `SOLTE: INICIAR`) | postura/menu |
+| Rodando | `FOCO 1/4   24:59`; pausado: ícone `‖` antes da fase; o preset aparece no lugar da fase por 2 s a cada 8 s (não cabem os dois) | `POSTURA: BOA`, `POSTURA: ATENÇÃO`... |
+| Postura ruim | igual | `POSTURA: RUIM` alternando com a linha cheia de blocos (o "invertido" do OLED) |
+| Enquadramento | igual | texto à esquerda + os **3 pontos** nas 2 últimas colunas (cheio = visto, anel = não visto) |
+| Troca de fase | tela inteira pisca com blocos (3 s) | |
+| Wi-Fi conectando | ícone + `CONECTANDO...` | alterna `REDE:`, `SENHA:`, `BANDA: 2.4 GHZ`, `CLIQUE: CANCELAR` |
+| Wi-Fi resultado | ícone + `WIFI CONECTADO`/`WIFI FALHOU` | ✓/✗ + nome da rede |
+
+- **Textos que não cabem em 16 colunas** ganham forma curta (só no LCD; tabela `FORMAS_CURTAS`):
+  `POSTURA: SEM SERVIÇO` → `POSTURA: OFFLINE`, `APERTE B1: CALIBRAR` → `B1 P/ CALIBRAR`,
+  `COMEÇANDO EM: 7s` → `COMEÇA EM 7s`, `SEGURE 3s: DESLIGAR` → `SEG.3s: DESLIGAR` etc. O que ainda não
+  couber rola na horizontal.
+- **Ícones e acentos** (Ç, Ã...) são caracteres desenhados em 5x8 na CGRAM, que só guarda **8 por
+  tela**; se faltar vaga, a letra perde o acento. A ROM japonesa do LCD troca `\` por ¥ e `~` por →:
+  esses dois também ganham desenho próprio (podem aparecer na senha do Wi-Fi).
+- **Limitação:** o backlight é ligado direto no 5 V (sem GPIO), então não dá pra piscar a luz;
+  o alerta pisca o conteúdo. Conferido só em prévia PNG, **não no LCD real**.
 
 **Como o código lê o módulo** (pinos em `pomodoro_config.py`):
 - O módulo tem resistor próprio, então o pino do Pi fica **sem pull interno** (`PULL_INTERNO_BOTOES = None`). A versão
@@ -193,7 +245,9 @@ pomodoro remover --preset 50/10       # o pré-configurado não sai
 | `energia.py` | B3: desligar o Pi (`sudo poweroff`), contagem na tela e aviso de falha |
 | `registro_pomodoro.py` | **Log do pomodoro** no arquivo de eventos do Pi: grava só as transições (lógica pura) |
 | `diagnostico_botoes.py` | Mostra as bordas cruas dos pinos no Pi (repique × ruído × polaridade) |
-| `display.py` | Desenho da tela + backends (OLED, emulador pygame, PNG) |
+| `display.py` | Desenho da tela 128x64 + backends (OLED, emulador pygame, PNG); escolhe entre OLED e LCD |
+| `display_lcd.py` | Telas no LCD 16x2 (mesmas funções do `display.py`) + backend real e prévia PNG |
+| `lcd_hd44780.py` | Driver do LCD HD44780 em 4 bits (gpiozero) |
 | `postura_cliente.py` | Consulta o `postura_servico.py` pelo socket Unix (sem mexer na câmera) |
 | `recalibracao.py` | Menu do B1 (postura → Wi-Fi; lógica pura) |
 | `wifi.py` | Wi-Fi: rede configurada, validação (WPA2 + cabe na tela), `nmcli` e a conexão em thread |
@@ -201,7 +255,7 @@ pomodoro remover --preset 50/10       # o pré-configurado não sai
 | `presets.py` | Presets: o pré-configurado + os do usuário (JSON), validação de `MM/MM[/MM]` |
 | `pomodoro_ctl.py` | O comando `pomodoro` (`listar`, `adicionar --preset`, `remover --preset`) |
 | `pomodoro_config.py` | **Preset de fábrica, pinos, polaridade e filtro dos botões, limites de aperto, endereço do OLED** |
-| `test_pomodoro.py` | Testes automáticos |
+| `test_pomodoro.py`, `test_display_lcd.py` | Testes automáticos |
 | `instalar.sh` | Instala como serviço do systemd (inicia no boot) |
 
 ## Testar sem hardware (notebook)
@@ -211,7 +265,7 @@ pip install pillow           # só isso pra testar a lógica e gerar PNG
 python -m unittest -v        # testes (de dentro da pasta pomodoro/)
 
 # Tela vira um PNG (/tmp/pomodoro_tela.png) e os botões viram teclado:
-python main.py --display png --botoes teclado
+python main.py --display lcd-png --botoes teclado     # prévia do LCD 16x2 (--display png = OLED)
 #   digite:  1c = B1 curto | 1l = B1 longo | 2c = B2 curto | 2l = B2 longo | 2m = B2 muito longo | 3m = B3 (só simula o desligar) | q = sair
 # No notebook sem NetworkManager, o WIFI CONECTAR mostra WIFI FALHOU (sem nmcli)
 
@@ -228,7 +282,7 @@ Sem o serviço de postura rodando, a linha de baixo mostra `POSTURA: SEM SERVIÇ
 source ~/venv-tcc/bin/activate
 pip install -r req.txt
 sudo raspi-config            # Interface Options → I2C (já ativado se o i2cdetect mostrou 3c)
-python main.py               # OLED + botões de verdade
+python main.py               # LCD + botões de verdade (OLED: --display oled)
 ```
 
 Se o `pip install` do `gpiozero`/`lgpio` falhar nesse venv (Python 3.11 compilado),

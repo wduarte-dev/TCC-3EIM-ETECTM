@@ -59,6 +59,29 @@ MENSAGEM_FALHA_DESLIGAR_S = 3.0
 OLED_I2C_PORTA = 1
 OLED_I2C_ENDERECO = 0x3C
 LARGURA, ALTURA = 128, 64
+
+# --- Qual display usar (23/11/2026: troca pro LCD 16x2) ---
+#   "lcd"  LCD 16x2 HD44780 por GPIO (4 bits) | "oled"  OLED SSD1306 128x64 (I2C)
+#   No notebook: "lcd-png" (prévia do LCD num PNG) ou "png"/"pygame" (do OLED).
+DISPLAY_PADRAO = "lcd"
+
+# --- LCD 16x2 HD44780, modo 4 bits (BCM; ligação em claude/hardware.md) ---
+# RW do LCD vai FIXO no GND: o LCD só recebe e nunca devolve 5 V pro GPIO do Pi.
+LCD_GPIO_RS = 5     # pino 29
+LCD_GPIO_E = 6      # pino 31
+LCD_GPIO_D4 = 13    # pino 33
+LCD_GPIO_D5 = 19    # pino 35
+LCD_GPIO_D6 = 26    # pino 37
+LCD_GPIO_D7 = 16    # pino 36
+LCD_COLUNAS, LCD_LINHAS = 16, 2
+# Topo do pomodoro rodando: a fase fica fixa e o preset aparece no lugar dela por
+# LCD_PRESET_MOSTRA_S a cada LCD_PRESET_CICLO_S (não cabem os dois em 16 colunas).
+# LCD_PRESET_CICLO_S = 0 desliga (só a fase). Escolha do projeto, sem validação.
+LCD_PRESET_CICLO_S = 8.0
+LCD_PRESET_MOSTRA_S = 2.0
+LCD_ROLAGEM_CPS = 3.0        # texto maior que a linha rola a 3 caracteres/s (raro)
+LCD_ALERTA_PISCA_HZ = 1.0    # POSTURA: RUIM alterna com a linha cheia (o "invertido" do OLED)
+
 ATUALIZACAO_TELA_S = 0.25    # a cada quanto tempo redesenha a tela
 PISCAR_MUDANCA_FASE_S = 3.0  # tela pisca (invertida) quando troca de fase: não há buzzer
 

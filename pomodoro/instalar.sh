@@ -45,7 +45,7 @@ fi
 
 sudo tee /etc/systemd/system/pomodoro.service >/dev/null <<EOF
 [Unit]
-Description=Pomodoro com display OLED e botoes (TCC)
+Description=Pomodoro com display (LCD 16x2 ou OLED) e botoes (TCC)
 After=multi-user.target postura.service
 
 [Service]
