@@ -80,6 +80,7 @@ LCD_COLUNAS, LCD_LINHAS = 16, 2
 LCD_PRESET_CICLO_S = 8.0
 LCD_PRESET_MOSTRA_S = 2.0
 LCD_ROLAGEM_CPS = 3.0        # texto maior que a linha rola a 3 caracteres/s (raro)
+LCD_WIFI_CREDENCIAIS_S = 6.0  # espera do Wi-Fi: REDE e SENHA ficam juntas na tela por esse tempo (a espera dura até ~10 s)
 LCD_ALERTA_PISCA_HZ = 1.0    # POSTURA: RUIM alterna com a linha cheia (o "invertido" do OLED)
 
 ATUALIZACAO_TELA_S = 0.25    # a cada quanto tempo redesenha a tela

@@ -66,7 +66,7 @@ linha de protoboard.
 | Postura ruim | igual | `POSTURA: RUIM` alternando com a linha cheia de blocos (o "invertido" do OLED) |
 | Enquadramento | igual | texto à esquerda + os **3 pontos** nas 2 últimas colunas (cheio = visto, anel = não visto) |
 | Troca de fase | tela inteira pisca com blocos (3 s) | |
-| Wi-Fi conectando | ícone + `CONECTANDO...` | alterna `REDE:`, `SENHA:`, `BANDA: 2.4 GHZ`, `CLIQUE: CANCELAR` |
+| Wi-Fi conectando | primeiros 6 s: `REDE:` e `SENHA:` juntas (rolam se forem longas; `LCD_WIFI_CREDENCIAIS_S`); depois ícone + `CONECTANDO...` | `BANDA: 2.4 GHZ` e `CLIQUE: CANCELAR` alternando (volta às credenciais a cada ~11 s) |
 | Wi-Fi resultado | ícone + `WIFI CONECTADO`/`WIFI FALHOU` | ✓/✗ + nome da rede |
 
 - **Textos que não cabem em 16 colunas** ganham forma curta (só no LCD; tabela `FORMAS_CURTAS`):
